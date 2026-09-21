@@ -1,0 +1,1522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SHOPER — Discover Stores. Compare Prices. Shop Smarter.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: { extend: {
+    colors: {
+      brand:{50:'#EFF9F5',100:'#D7EFE4',200:'#B0DFCA',300:'#7FC9A6',400:'#47A97F',500:'#1F8A62',600:'#0E7C5B',700:'#0C6449',800:'#0A4F3B',900:'#083D2E'},
+      ink:'#15201B', mut:'#5D6B63', paper:'#F6F5F0', cream:'#FBFAF6', amber2:'#E8930C'
+    },
+    fontFamily:{ display:['Poppins','sans-serif'], body:['Inter','sans-serif'] },
+    boxShadow:{ soft:'0 6px 24px -10px rgba(21,32,27,.14)', lift:'0 18px 44px -14px rgba(21,32,27,.22)' }
+  }}
+}
+</script>
+<style>
+  html{scroll-behavior:smooth}
+  body{background:#F6F5F0;color:#15201B;font-family:'Inter',sans-serif}
+  ::selection{background:#0E7C5B;color:#fff}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#c9c6bb;border-radius:9px}
+  ::-webkit-scrollbar-track{background:transparent}
+  .noscroll::-webkit-scrollbar{display:none}
+  .reveal{opacity:0;transform:translateY(20px);transition:opacity .7s cubic-bezier(.2,.7,.3,1),transform .7s cubic-bezier(.2,.7,.3,1)}
+  .reveal.in{opacity:1;transform:none}
+  .pin{filter:drop-shadow(0 4px 6px rgba(0,0,0,.3));transition:transform .2s}
+  .pin:hover{transform:scale(1.15)}
+  .upin{position:relative;width:18px;height:18px}
+  .upin span{position:absolute;inset:3px;background:#0E7C5B;border:3px solid #fff;border-radius:50%;box-shadow:0 1px 6px rgba(0,0,0,.4);z-index:2}
+  .upin::after{content:'';position:absolute;inset:-6px;border-radius:50%;background:rgba(14,124,91,.3);animation:pulse 1.8s ease-out infinite}
+  @keyframes pulse{0%{transform:scale(.5);opacity:1}100%{transform:scale(1.8);opacity:0}}
+  .leaflet-container{font-family:'Inter',sans-serif}
+  .leaflet-popup-content-wrapper{border-radius:16px;box-shadow:0 12px 34px -10px rgba(21,32,27,.3)}
+  .leaflet-popup-content{margin:14px 16px}
+  .leaflet-bar{border:none!important;box-shadow:0 6px 18px -6px rgba(21,32,27,.25)!important;border-radius:10px!important;overflow:hidden}
+  .leaflet-bar a{border:none!important}
+  @keyframes toastIn{from{opacity:0;transform:translateY(14px) scale(.96)}to{opacity:1;transform:none}}
+  .toast{animation:toastIn .35s cubic-bezier(.2,.8,.3,1)}
+  @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+  .floaty{animation:floatY 5s ease-in-out infinite}
+  .floaty2{animation:floatY 6.5s ease-in-out infinite;animation-delay:1.2s}
+  @keyframes riseIn{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:none}}
+  .rise{opacity:0;animation:riseIn .8s cubic-bezier(.2,.7,.3,1) forwards}
+  input[type=range]{accent-color:#0E7C5B}
+  .tabbtn.active{background:#0E7C5B;color:#fff}
+  .tabbtn.active svg{color:#fff}
+  .chip.active{background:#0E7C5B;color:#fff;border-color:#0E7C5B}
+  .leaflet-control-attribution{font-size:9px}
+</style>
+</head>
+<body class="antialiased">
+<div id="app"></div>
+<div id="mobilenav"></div>
+<div id="toasts" class="fixed bottom-24 md:bottom-6 right-4 z-[9999] flex flex-col gap-2 items-end"></div>
+
+<script>
+/* ============================== STATE & UTILITIES ============================== */
+const S = {
+  user: null,
+  loc: { lat: 30.0444, lng: 31.2357, label: 'Tahrir Square, Downtown Cairo' },
+  favStores: new Set(), favProducts: new Set(), savedOffers: new Set(),
+  recent: [], history: [], pending: [
+    {id:'ps1',name:'Nile Gadget Store',cat:'Electronics',area:'Maadi, Cairo',rating:4.1,owner:'Mostafa Kamel'},
+    {id:'ps2',name:'Green Basket Market',cat:'Supermarkets',area:'Dokki, Giza',rating:4.4,owner:'Salma Adel'}
+  ],
+  reports: [
+    {id:'r1',type:'Wrong price',desc:'USB-C 65W charger listed 220 EGP but costs 300 EGP at store',by:'Nour H.',at:'2 hours ago'},
+    {id:'r2',type:'Closed permanently',desc:'Trend Maadi seems closed for 2 weeks',by:'Karim S.',at:'Yesterday'},
+    {id:'r3',type:'Wrong category',desc:'LED Desk Lamp appears under Pharmacy results',by:'Mona T.',at:'2 days ago'}
+  ],
+  categories: ['Electronics','Fashion','Supermarkets','Restaurants','Pharmacies','Cosmetics','Furniture','Mobile Accessories']
+};
+try{ Object.assign(S, JSON.parse(localStorage.getItem('shoper')||'{}'), {user:S.user}); ['favStores','favProducts','savedOffers'].forEach(k=>S[k]=new Set(S[k]||[])); }catch(e){}
+function persist(){ localStorage.setItem('shoper', JSON.stringify({...S, favStores:[...S.favStores], favProducts:[...S.favProducts], savedOffers:[...S.savedOffers]})); }
+
+const $ = s => document.querySelector(s);
+const fmt = n => n.toLocaleString('en-EG');
+const EGP = n => fmt(n) + ' EGP';
+const hav = (a,b,c,d) => { const R=6371,t=Math.PI/180,dl=(c-a)*t,dn=(d-b)*t,x=Math.sin(dl/2)**2+Math.cos(a*t)*Math.cos(c*t)*Math.sin(dn/2)**2; return 2*R*Math.asin(Math.sqrt(x)); };
+const dist = s => hav(S.loc.lat,S.loc.lng,s.lat,s.lng);
+const dstr = d => d<1 ? Math.round(d*1000)+' m' : d.toFixed(1)+' km';
+const esc = t => String(t).replace(/</g,'&lt;');
+const catIcon = {Electronics:'cpu','Mobile Accessories':'smartphone',Fashion:'shirt',Supermarkets:'shopping-basket',Restaurants:'utensils',Pharmacies:'pill',Cosmetics:'sparkles',Furniture:'lamp',Groceries:'shopping-basket'};
+const catColor = {Electronics:'#0E7C5B','Mobile Accessories':'#0A9BD6',Fashion:'#C2417B',Supermarkets:'#5B8C1E',Restaurants:'#D9640C',Pharmacies:'#0E8FA8',Cosmetics:'#A34AC2',Furniture:'#8C6239',Groceries:'#5B8C1E'};
+const expDays = i => { const d=new Date(); d.setDate(d.getDate()+3+(i%25)); return d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}); };
+
+function toast(msg, icon='check-circle-2'){
+  const t = document.createElement('div');
+  t.className = 'toast flex items-center gap-2.5 bg-ink text-white text-sm font-medium pl-3.5 pr-5 py-3 rounded-xl shadow-lift';
+  t.innerHTML = `<i data-lucide="${icon}" class="w-4.5 h-4.5 w-5 h-5 text-brand-300"></i><span>${esc(msg)}</span>`;
+  $('#toasts').appendChild(t); lucide.createIcons();
+  setTimeout(()=>{ t.style.transition='all .4s'; t.style.opacity='0'; t.style.transform='translateY(10px)'; setTimeout(()=>t.remove(),400); }, 2800);
+}
+const stars = r => { let h=''; for(let i=1;i<=5;i++) h+=`<i data-lucide="star" class="w-3.5 h-3.5 ${i<=Math.round(r)?'fill-amber-400 text-amber-400':'text-stone-300'}"></i>`; return `<span class="inline-flex gap-0.5 align-middle">${h}</span>`; };
+const pic = (seed,w,h) => `https://picsum.photos/seed/${seed}/${w}/${h}.jpg`;
+let maps=[], charts=[];
+const killMaps = () => { maps.forEach(m=>m.remove()); maps=[]; };
+const killCharts = () => { charts.forEach(c=>c.destroy()); charts=[]; };
+function track(type,id,name){ S.recent = S.recent.filter(r=>!(r.type===type&&r.id===id)); S.recent.unshift({type,id,name,at:'just now'}); S.recent=S.recent.slice(0,12); persist(); }
+function logSearch(q){ if(!q) return; S.history = [q,...S.history.filter(x=>x!==q)].slice(0,10); persist(); }
+
+/* ============================== DEMO DATA (Egyptian context) ============================== */
+const STORES = [
+  {id:0,name:'Electo Zone',cat:'Electronics',area:'Downtown',address:'12 Talaat Harb St, Downtown, Cairo',lat:30.0480,lng:31.2410,rating:4.6,rev:412,hours:'10:00 – 22:00',open:true,phone:'+20 100 452 7781',img:'eleczone',desc:'The largest electronics showroom in Downtown Cairo with genuine warranty on every product.'},
+  {id:1,name:'Cairo Mobile Hub',cat:'Mobile Accessories',area:'Downtown',address:'5 Abdel Khalek Sarwat St, Downtown, Cairo',lat:30.0465,lng:31.2380,rating:4.4,rev:318,hours:'10:00 – 23:00',open:true,phone:'+20 111 908 3345',img:'mobhub',desc:'Everything for your phone — chargers, cases, audio and fast repair service.'},
+  {id:2,name:'Zahret El Tahrir Market',cat:'Supermarkets',area:'Downtown',address:'3 Champollion St, Downtown, Cairo',lat:30.0432,lng:31.2339,rating:4.3,rev:890,hours:'08:00 – 01:00',open:true,phone:'+20 122 331 5590',img:'zahra',desc:'Fresh groceries, household goods and daily essentials around the corner.'},
+  {id:3,name:'El Shabrawy Grill',cat:'Restaurants',area:'Downtown',address:'21 Emad El Din St, Downtown, Cairo',lat:30.0490,lng:31.2440,rating:4.7,rev:1240,hours:'11:00 – 02:00',open:true,phone:'+20 106 774 1290',img:'shabrawy',desc:'Legendary Egyptian grills, koshary and family platters since 1985.'},
+  {id:4,name:'El Nour Pharmacy',cat:'Pharmacies',area:'Downtown',address:'40 Sherif St, Downtown, Cairo',lat:30.0420,lng:31.2300,rating:4.8,rev:657,hours:'24 Hours',open:true,phone:'+20 128 445 0912',img:'pharmnour',desc:'Open 24/7 with a full range of medicines, vitamins and medical devices.'},
+  {id:5,name:'Glamour Zamalek',cat:'Cosmetics',area:'Zamalek',address:'8 Brazil St, Zamalek, Cairo',lat:30.0600,lng:31.2200,rating:4.5,rev:288,hours:'11:00 – 21:00',open:true,phone:'+20 115 623 8840',img:'glamz',desc:'Premium skincare, fragrance and makeup from global brands.'},
+  {id:6,name:'El Dekhila Furniture',cat:'Furniture',area:'Giza',address:'90 El Haram St, Giza, Giza',lat:30.0100,lng:31.2085,rating:4.2,rev:174,hours:'10:00 – 21:00',open:true,phone:'+20 101 550 2763',img:'dekhila',desc:'Handcrafted Egyptian furniture for living rooms, bedrooms and offices.'},
+  {id:7,name:'Trend Maadi',cat:'Fashion',area:'Maadi',address:'17 Road 9, Maadi, Cairo',lat:29.9600,lng:31.2600,rating:4.4,rev:502,hours:'11:00 – 22:00',open:true,phone:'+20 109 887 6612',img:'trendm',desc:'Modern Egyptian fashion — casual, formal and everything in between.'},
+  {id:8,name:'Solar Tech Heliopolis',cat:'Electronics',area:'Heliopolis',address:'33 Abbas El Akkad St, Heliopolis, Cairo',lat:30.0900,lng:31.3220,rating:4.6,rev:389,hours:'10:00 – 22:00',open:true,phone:'+20 127 214 8809',img:'solartech',desc:'TVs, laptops and audio gear with same-day delivery in Heliopolis.'},
+  {id:9,name:'Sabah El Khair Market',cat:'Supermarkets',area:'Garden City',address:'2 Kasr El Nil St, Garden City, Cairo',lat:30.0310,lng:31.2340,rating:4.1,rev:445,hours:'07:00 – 23:00',open:true,phone:'+20 112 906 4478',img:'sabah',desc:'Your friendly neighbourhood market with weekly fresh arrivals.'},
+  {id:10,name:'Betawfeek Kitchen',cat:'Restaurants',area:'Zamalek',address:'26 El Morocco St, Zamalek, Cairo',lat:30.0620,lng:31.2215,rating:4.6,rev:934,hours:'12:00 – 01:00',open:true,phone:'+20 114 332 9085',img:'betawfeek',desc:'Home-style Egyptian cooking, pizzas and fresh juices to stay or go.'},
+  {id:11,name:'El Salam Pharmacy',cat:'Pharmacies',area:'Nasr City',address:'15 Mustafa El Nahhas St, Nasr City, Cairo',lat:30.0520,lng:31.3180,rating:4.5,rev:321,hours:'09:00 – 23:00',open:true,phone:'+20 120 778 5521',img:'salams',desc:'Trusted pharmacy with skincare, baby care and wellness products.'},
+  {id:12,name:'Tech Corner Mohandessin',cat:'Mobile Accessories',area:'Mohandessin',address:'7 Shehab St, Mohandessin, Giza',lat:30.0500,lng:31.2000,rating:4.3,rev:267,hours:'11:00 – 22:00',open:true,phone:'+20 111 205 9937',img:'techcorner',desc:'The best prices on chargers, cables and mobile gear in Mohandessin.'},
+  {id:13,name:'Urban Fit Dokki',cat:'Fashion',area:'Dokki',address:'52 Tahrir St, Dokki, Giza',lat:30.0400,lng:31.2120,rating:4.2,rev:198,hours:'11:00 – 21:00',open:true,phone:'+20 106 419 2270',img:'urbanfit',desc:'Streetwear, sportswear and everyday essentials for the whole family.'},
+  {id:14,name:'Deeko Home Nasr City',cat:'Furniture',area:'Nasr City',address:'108 Abbas El Akkad St, Nasr City, Cairo',lat:30.0560,lng:31.3230,rating:4.4,rev:233,hours:'10:00 – 22:00',open:false,phone:'+20 122 664 1078',img:'deeko',desc:'Modern home furniture with free assembly across Greater Cairo.'},
+  {id:15,name:'Lotus Beauty Heliopolis',cat:'Cosmetics',area:'Heliopolis',address:'11 Baghdad St, Heliopolis, Cairo',lat:30.0950,lng:31.3400,rating:4.7,rev:356,hours:'10:00 – 21:00',open:true,phone:'+20 128 093 4416',img:'lotusbeauty',desc:'Authentic beauty and fragrance with free skin consultation.'},
+];
+const sid = i => STORES[i];
+const storeProducts = si => PRODUCTS.filter(p=>p.listings.some(l=>l[0]===si));
+const storeOffers = si => storeProducts(si).flatMap(p=>p.listings.filter(l=>l[0]===si&&l[2]).map(l=>({p,l})));
+const discount = l => Math.round((1-l[1]/l[2])*100);
+
+/* Products: [storeIdx, price, oldPrice|null, stock] */
+function P(id,name,cat,seed,desc,specs,listings){ return {id,name,cat,seed,desc,specs,listings}; }
+const PRODUCTS = [
+  P('p1','iPhone 20W Fast Charger','Mobile Accessories','pch20','Original 20W USB-C power adapter with fast charge — 50% in 30 minutes.',[['Power','20W'],['Port','USB-C'],['Warranty','1 year']],[[1,320,399,12],[12,299,349,7],[8,349,null,20]]),
+  P('p2','USB-C 65W GaN Charger','Mobile Accessories','gan65','Compact GaN charger that powers laptops and phones from one tiny brick.',[['Power','65W'],['Ports','2x USB-C'],['Tech','GaN II']],[[0,280,null,9],[1,220,245,15],[12,250,280,6]]),
+  P('p3','Power Bank 20000mAh','Electronics','bank20','High-density power bank with 22.5W fast output and dual inputs.',[['Capacity','20,000mAh'],['Output','22.5W'],['Weight','420g']],[[0,750,890,5],[12,699,null,11],[8,780,850,4]]),
+  P('p4','Wireless Earbuds Pro ANC','Electronics','earbuds','Active noise cancelling earbuds with 32h total battery and crystal calls.',[['ANC','Yes, -38dB'],['Battery','32h with case'],['IP','IPX5']],[[1,1450,1799,8],[0,1590,null,3],[8,1499,1650,10]]),
+  P('p5','Bluetooth Speaker X3','Electronics','speakx3','360° sound, deep bass, 20h playtime and IPX7 waterproof body.',[['Output','30W'],['Battery','20h'],['Rating','IPX7']],[[0,890,null,14],[8,840,999,9]]),
+  P('p6','65" 4K Smart TV','Electronics','tv65','Ultra HD smart TV with HDR10+, Dolby Audio and built-in streaming apps.',[['Size','65 inch'],['Res','4K UHD'],['HDR','HDR10+']],[[0,18500,21000,4],[8,17900,null,6]]),
+  P('p7','Gaming Laptop 15" RTX','Electronics','gamlap','144Hz gaming laptop with RTX graphics and cooling that keeps up.',[['GPU','RTX 4060'],['RAM','16GB DDR5'],['Screen','144Hz']],[[0,38900,null,2],[8,37500,41000,3]]),
+  P('p8','Mechanical Keyboard RGB','Electronics','mechkb','Hot-swappable mechanical keyboard with per-key RGB and aluminum frame.',[['Switch','Red, hot-swap'],['Layout','US RGB'],['Frame','Aluminum']],[[12,1250,1450,10],[0,1199,null,7]]),
+  P('p9','Ergo Wireless Mouse','Electronics','ergmouse','Silent-click ergonomic mouse with 4000 DPI and 6 buttons.',[['DPI','4000'],['Battery','70 days'],['Connect','2.4G + BT']],[[12,450,null,25],[0,420,480,18]]),
+  P('p10','Smart Watch Active 2','Electronics','watch2','AMOLED smartwatch with calls, SpO2, and 14-day battery life.',[['Screen','AMOLED 1.8"'],['Battery','14 days'],['Calls','Bluetooth']],[[1,2300,2699,6],[8,2450,null,5]]),
+  P('p11','Clear Case iPhone 15','Mobile Accessories','case15','Military-grade clear case with yellowing resistance and raised edges.',[['Material','TPU + PC'],['MIL','MIL-STD 810G'],['MagSafe','Yes']],[[1,120,null,40],[12,95,130,35]]),
+  P('p12','Tempered Glass Protector','Mobile Accessories','glassp','9H full-coverage glass with installation frame in the box.',[['Hardness','9H'],['Coverage','Full'],['Kit','Frame included']],[[12,80,99,50],[1,75,null,60]]),
+  P('p13','HDMI Cable 2m 8K','Electronics','hdmi8k','Braided 8K60Hz HDMI 2.1 cable certified for PS5 and high-end TVs.',[['Version','HDMI 2.1'],['Res','8K@60'],['Length','2m']],[[0,180,null,30],[12,160,199,22]]),
+  P('p14','Cotton Oxford Shirt','Fashion','oxford','Breathable 100% Egyptian cotton oxford, tailored regular fit.',[['Fabric','Egyptian cotton'],['Fit','Regular'],['Care','Machine wash']],[[7,650,790,20],[13,599,null,26]]),
+  P('p15','Linen Summer Dress','Fashion','linendress','Airy linen midi dress — perfect for Sahel and El Gouna summers.',[['Fabric','100% linen'],['Length','Midi'],['Sizes','S–XL']],[[13,890,1090,12],[7,950,null,9]]),
+  P('p16','Denim Jacket Classic','Fashion','denimjkt','Timeless washed denim jacket with brushed lining.',[['Fabric','12oz denim'],['Wash','Mid blue'],['Fit','Regular']],[[7,1150,null,10],[13,1080,1299,8]]),
+  P('p17','Running Sneakers Air','Fashion','sneakers','Lightweight running shoes with air cushioning and knit upper.',[['Drop','8mm'],['Weight','240g'],['Use','Road running']],[[13,1450,1799,14],[7,1520,null,6]]),
+  P('p18','Leather Wallet Slim','Fashion','wallet','Full-grain cowhide slim wallet with RFID protection.',[['Leather','Full-grain'],['Slots','8 cards'],['RFID','Yes']],[[13,480,560,22],[7,510,null,15]]),
+  P('p19','Kids Fleece Hoodie','Fashion','kidshood','Soft brushed fleece hoodie — Cairo winter essential.',[['Fabric','Fleece'],['Ages','4–12'],['Wash','Easy care']],[[7,350,420,18],[13,329,null,20]]),
+  P('p20','Basmati Rice 5kg','Groceries','rice5','Premium long-grain basmati, aged 12 months for perfect fluffiness.',[['Weight','5kg'],['Type','Aged basmati'],['Origin','Imported']],[[2,285,320,60],[9,269,null,80]]),
+  P('p21','Extra Virgin Olive Oil 1L','Groceries','oliveoil','Cold-pressed olive oil from Fayoum groves — first harvest.',[['Volume','1L'],['Press','Cold, first'],['Acidity','0.4%']],[[9,340,399,25],[2,355,null,30]]),
+  P('p22','Egyptian Honey 500g','Groceries','honey500','Raw clover honey from Upper Egypt beekeepers.',[['Type','Clover, raw'],['Weight','500g'],['Additives','None']],[[2,180,220,15]]),
+  P('p23','Baladi Bread Pack ×5','Groceries','baladi','Freshly baked whole-wheat baladi bread, baked every 3 hours.',[['Pieces','5'],['Type','Whole wheat'],['Fresh','Daily']],[[2,25,null,100],[9,22,28,80]]),
+  P('p24','Mixed Nuts Premium 1kg','Groceries','nuts1k','Roasted almonds, cashews, pistachios and hazelnuts — party grade.',[['Weight','1kg'],['Roast','Unsalted'],['Mix','4 nuts']],[[9,420,499,12],[2,445,null,10]]),
+  P('p25','Colombian Coffee Beans 250g','Groceries','coffee250','Single-origin Arabica, medium roast, roasted locally this week.',[['Origin','Colombia'],['Roast','Medium'],['Weight','250g']],[[2,260,null,18],[9,245,290,14]]),
+  P('p26','Mixed Grill Platter for 2','Restaurants','grill2','Kofta, shish tawook, lamb chops, rice and tahini — feasts for two.',[['Serves','2 persons'],['Sides','Rice + salad'],['Spice','Medium']],[[3,420,520,30],[10,450,null,25]]),
+  P('p27','Family Pizza Large','Restaurants','pizzafam','Wood-fired 40cm pizza with mozzarella and your choice of 3 toppings.',[['Size','40cm'],['Dough','Wood-fired'],['Toppings','Pick 3']],[[10,260,310,40]]),
+  P('p28','Koshary Family Box','Restaurants','kosharybox','Cairo\'s iconic koshary — rice, lentils, pasta, crispy onions and dauda sauce.',[['Serves','4 persons'],['Sauce','Dauda basha'],['Extra','Chickpeas']],[[3,180,215,50]]),
+  P('p29','Fresh Juice Bundle 1L','Restaurants','juice1l','Cold-pressed orange, mango or sugarcane — squeezed to order.',[['Volume','1L'],['Options','3 flavors'],['Fresh','To order']],[[10,90,null,35],[3,85,100,28]]),
+  P('p30','Vitamin C 1000mg ×60','Pharmacy','vitc60','Effervescent vitamin C tablets with zinc for daily immunity.',[['Count','60 tabs'],['Dose','1000mg'],['Plus','Zinc']],[[4,145,180,40],[11,135,null,55]]),
+  P('p31','Blood Pressure Monitor','Pharmacy','bpmonitor','Clinically validated upper-arm BP monitor with 2×90 memory.',[['Cuff','Upper arm'],['Memory','2×90'],['Warranty','2 years']],[[4,980,1150,8],[11,1020,null,6]]),
+  P('p32','Sunscreen SPF50+','Pharmacy','spf50','Very high protection gel-cream, no white cast, reef safe.',[['SPF','50+ PA++++'],['Type','Gel-cream'],['Size','50ml']],[[11,320,380,20],[4,335,null,16]]),
+  P('p33','Baby Diapers Mega Pack','Pharmacy','diapers','Ultra-dry mega pack with 12h leakage protection.',[['Count','120 pcs'],['Size','Size 4'],['Dry','12 hours']],[[4,520,null,30],[11,495,575,25]]),
+  P('p34','Vitamin D3 Drops','Pharmacy','vitd3','High-absorption D3 drops for the whole family, 400 IU per drop.',[['Volume','20ml'],['Dose','400 IU/drop'],['Age','All ages']],[[11,175,null,22],[4,160,195,18]]),
+  P('p35','Hyaluronic Face Serum','Cosmetics','hyaserum','Multi-weight hyaluronic serum for 72h deep hydration.',[['Volume','30ml'],['HA','3 weights'],['Skin','All types']],[[5,680,850,15],[15,645,null,12]]),
+  P('p36','Matte Lipstick Set ×5','Cosmetics','lipset5','Five everyday matte shades — transfer-proof and vitamin E enriched.',[['Shades','5'],['Finish','Matte'],['Care','Vitamin E']],[[15,790,950,10],[5,820,null,8]]),
+  P('p37','Oud Royal Perfume 100ml','Cosmetics','oudroyal','Rich Khaleeji oud with amber and saffron — 10h projection.',[['Volume','100ml'],['Notes','Oud, amber, saffron'],['Longevity','10h+']],[[5,1850,2300,6],[15,1780,null,0]]),
+  P('p38','Hair Dryer Pro 2200W','Cosmetics','hairdryer','Ionic 2200W dryer with 3 heat settings and cold shot.',[['Power','2200W'],['Tech','Ionic'],['Settings','3 heat + cool']],[[15,890,1050,11],[5,860,null,13]]),
+  P('p39','3-Seater Fabric Sofa','Furniture','sofa3','Deep-seat fabric sofa with kiln-dried beech frame, 5-year warranty.',[['Width','220cm'],['Frame','Beech'],['Warranty','5 years']],[[6,12500,14900,5],[14,11900,null,7]]),
+  P('p40','Oak Dining Table 6 Seats','Furniture','oaktable','Solid oak dining table with matte lacquer finish.',[['Seats','6'],['Wood','Solid oak'],['Finish','Matte']],[[14,16800,19500,3],[6,17400,null,4]]),
+  P('p41','Ergonomic Office Chair','Furniture','offchair','Mesh-back chair with lumbar support, 4D arms and 135° recline.',[['Back','Mesh'],['Arms','4D'],['Recline','135°']],[[14,3900,4600,10],[6,3650,null,12]]),
+  P('p42','Memory Foam Mattress 160','Furniture','mattress','Medium-firm memory foam mattress with washable knitted cover.',[['Size','160×200'],['Firmness','Medium-firm'],['Height','26cm']],[[6,6900,null,8],[14,6500,7400,6]]),
+  P('p43','Wall Bookshelf Unit','Furniture','bookshelf','6-tier wall unit in walnut veneer — holds 120 books.',[['Tiers','6'],['Finish','Walnut'],['Load','120 books']],[[14,2800,3200,9],[6,2950,null,7]]),
+  P('p44','LED Desk Lamp','Furniture','desklamp','Eye-care LED lamp with 5 temperatures, USB port and memory dimming.',[['Power','12W'],['Modes','5 temps'],['Extra','USB port']],[[14,480,null,20],[6,440,520,16]]),
+];
+PRODUCTS.forEach(p=>p.listings.forEach((l,i)=>l[3]=l[3]??0));
+
+/* ============================== SHARED UI ============================== */
+const logo = (cls='h-9 w-9') => `
+  <span class="${cls} rounded-xl bg-brand-600 flex items-center justify-center shadow-soft shrink-0">
+    <svg viewBox="0 0 24 24" fill="none" class="h-[62%] w-[62%]"><path d="M12 21s-6.5-5.6-6.5-10.4A6.5 6.5 0 0 1 12 4a6.5 6.5 0 0 1 6.5 6.6C18.5 15.4 12 21 12 21z" fill="#fff" opacity=".95"/><circle cx="12" cy="10.4" r="2.6" fill="#0E7C5B"/><rect x="10" y="9.4" width="4" height="3.4" rx="1" fill="#fff"/><path d="M10.8 9.4V8.8a1.2 1.2 0 0 1 2.4 0v.6" stroke="#fff" stroke-width="1" fill="none"/></svg>
+  </span>`;
+
+function navHTML(active){
+  const links = [['#/','Home'],['#/explore','Explore Stores'],['#/search','Products'],['#/offers','Offers'],['#/how','How It Works'],['#/about','About']];
+  return `
+  <header id="topnav" class="fixed top-0 inset-x-0 z-[900] bg-cream/85 backdrop-blur-lg border-b border-stone-200/70 transition-shadow">
+    <div class="max-w-7xl mx-auto px-4 lg:px-8 h-16 flex items-center gap-3">
+      <a href="#/" class="flex items-center gap-2.5 mr-2">${logo()}<span class="font-display font-bold text-xl tracking-tight">SHOPER</span></a>
+      <nav class="hidden lg:flex items-center gap-1 text-sm font-medium text-mut">
+        ${links.map(([h,l])=>`<a href="${h}" class="px-3 py-2 rounded-lg hover:text-ink hover:bg-stone-100 transition ${active===l?'text-ink bg-brand-50':''}">${l}</a>`).join('')}
+      </nav>
+      <div class="flex-1"></div>
+      <button onclick="detectLoc()" class="hidden md:flex items-center gap-1.5 text-xs font-semibold text-brand-700 bg-brand-50 border border-brand-100 px-3 py-2 rounded-full hover:bg-brand-100 transition">
+        <i data-lucide="map-pin" class="w-3.5 h-3.5"></i><span class="max-w-[150px] truncate">${S.loc.label}</span>
+      </button>
+      ${S.user ? `<a href="#/account" class="hidden md:flex items-center gap-2 pl-1 pr-3 py-1 rounded-full border border-stone-200 hover:shadow-soft transition bg-white">
+          <span class="h-8 w-8 rounded-full bg-brand-600 text-white text-xs font-bold flex items-center justify-center">${S.user.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</span>
+          <span class="text-sm font-semibold">${S.user.name.split(' ')[0]}</span></a>`
+      : `<a href="#/login" class="hidden md:block text-sm font-semibold px-4 py-2 rounded-lg hover:bg-stone-100 transition">Login</a>
+         <a href="#/register" class="hidden md:block text-sm font-semibold px-4 py-2 rounded-lg border border-stone-300 hover:border-ink transition">Sign Up</a>`}
+      <a href="#/explore" class="hidden sm:inline-flex items-center gap-2 text-sm font-semibold text-white bg-brand-600 hover:bg-brand-700 active:scale-[.97] px-4 py-2.5 rounded-xl shadow-soft transition">
+        <i data-lucide="radar" class="w-4 h-4"></i>Explore Nearby Stores</a>
+      <button onclick="toggleMM()" class="lg:hidden p-2 rounded-lg hover:bg-stone-100"><i data-lucide="menu" class="w-6 h-6"></i></button>
+    </div>
+    <div id="mmenu" class="hidden lg:hidden border-t border-stone-200 bg-cream px-4 py-3 flex flex-col gap-1 text-sm font-medium">
+      ${links.map(([h,l])=>`<a href="${h}" class="px-3 py-2.5 rounded-lg hover:bg-stone-100">${l}</a>`).join('')}
+      <div class="flex gap-2 pt-2"><a href="#/login" class="flex-1 text-center px-4 py-2.5 rounded-xl border border-stone-300 font-semibold">Login</a>
+      <a href="#/register" class="flex-1 text-center px-4 py-2.5 rounded-xl bg-brand-600 text-white font-semibold">Sign Up</a></div>
+    </div>
+  </header>`;
+}
+function toggleMM(){ $('#mmenu').classList.toggle('hidden'); }
+function detectLoc(){
+  const b = event.currentTarget; b.innerHTML = '<span class="animate-pulse">Locating…</span>';
+  setTimeout(()=>{ toast('Location detected — ' + S.loc.label, 'map-pin'); route(); }, 900);
+}
+
+function footerHTML(){
+  return `
+  <footer id="about" class="bg-ink text-stone-300 mt-20">
+    <div class="max-w-7xl mx-auto px-4 lg:px-8 py-14 grid md:grid-cols-4 gap-10">
+      <div>
+        <div class="flex items-center gap-2.5 mb-4">${logo('h-9 w-9')}<span class="font-display font-bold text-xl text-white">SHOPER</span></div>
+        <p class="text-sm leading-relaxed text-stone-400">SHOPER connects Egyptian shoppers with the stores around them — discover products, compare real local prices and walk into the best deal.</p>
+        <div class="flex gap-2 mt-5">
+          ${['facebook','instagram','twitter','youtube'].map(s=>`<a href="#/" class="h-9 w-9 rounded-lg bg-white/10 hover:bg-brand-600 transition flex items-center justify-center"><i data-lucide="${s}" class="w-4 h-4"></i></a>`).join('')}
+        </div>
+      </div>
+      <div><h4 class="text-white font-semibold mb-4 text-sm uppercase tracking-wider">Platform</h4>
+        <ul class="space-y-2.5 text-sm">${[['#/explore','Explore Stores'],['#/search','Product Search'],['#/offers','Local Offers'],['#/how','How It Works']].map(([h,l])=>`<li><a class="hover:text-white transition" href="${h}">${l}</a></li>`).join('')}</ul></div>
+      <div><h4 class="text-white font-semibold mb-4 text-sm uppercase tracking-wider">For Business</h4>
+        <ul class="space-y-2.5 text-sm">${[['#/merchant','Store Owner Dashboard'],['#/admin','Admin Console'],['#/register?type=owner','List Your Store'],['#/login','Store Login']].map(([h,l])=>`<li><a class="hover:text-white transition" href="${h}">${l}</a></li>`).join('')}</ul></div>
+      <div><h4 class="text-white font-semibold mb-4 text-sm uppercase tracking-wider">Stay in the loop</h4>
+        <p class="text-sm text-stone-400 mb-3">Weekly best local offers in your inbox.</p>
+        <div class="flex"><input id="nlmail" placeholder="you@email.com" class="w-full text-sm rounded-l-xl px-3.5 py-2.5 bg-white/10 border border-white/10 outline-none focus:border-brand-400 text-white"/>
+        <button onclick="toast('Subscribed! Watch your inbox for local offers.','mail-check')" class="bg-brand-600 hover:bg-brand-500 transition px-4 rounded-r-xl"><i data-lucide="send" class="w-4 h-4"></i></button></div>
+      </div>
+    </div>
+    <div class="border-t border-white/10 py-5 text-center text-xs text-stone-500">© 2025 SHOPER — A graduation project demo. All store data is illustrative.</div>
+  </footer>`;
+}
+
+function mobileNav(){
+  const items = [['#/','home','Home'],['#/explore','map','Explore'],['#/search','search','Search'],['#/offers','badge-percent','Offers'],['#/account','user','Account']];
+  $('#mobilenav').innerHTML = `
+  <nav class="md:hidden fixed bottom-0 inset-x-0 z-[900] bg-cream/95 backdrop-blur-lg border-t border-stone-200 pb-[env(safe-area-inset-bottom)]">
+    <div class="grid grid-cols-5 h-16 items-center text-[11px] font-medium text-mut">
+      ${items.map(([h,ic,l],i)=> i===2
+        ? `<a href="${h}" class="flex flex-col items-center -mt-6"><span class="h-12 w-12 rounded-2xl bg-brand-600 text-white flex items-center justify-center shadow-lift active:scale-90 transition"><i data-lucide="search" class="w-5 h-5"></i></span></a>`
+        : `<a href="${h}" class="flex flex-col items-center gap-1 hover:text-ink transition"><i data-lucide="${ic}" class="w-5 h-5"></i>${l}</a>`).join('')}
+    </div>
+  </nav>`;
+}
+
+function journeyStrip(){
+  const steps = [['map-pin','Open SHOPER','Location detected'],['radar','See Nearby','Stores around you'],['search','Search','Any product'],['git-compare-arrows','Compare','Real local prices'],['store','Choose Store','Best rated & closest'],['navigation','Get Directions','Walk right in']];
+  return `<div class="reveal flex items-start gap-0 overflow-x-auto noscroll py-2">
+    ${steps.map(([ic,t,d],i)=>`
+      <div class="flex items-center shrink-0">
+        <div class="flex flex-col items-center text-center w-28">
+          <div class="h-11 w-11 rounded-full bg-white border-2 border-brand-200 text-brand-700 flex items-center justify-center shadow-soft"><i data-lucide="${ic}" class="w-5 h-5"></i></div>
+          <p class="mt-2 text-sm font-semibold">${t}</p><p class="text-xs text-mut">${d}</p>
+        </div>
+        ${i<steps.length-1?`<div class="h-0.5 w-10 bg-gradient-to-r from-brand-300 to-brand-100 rounded mt-5"></div>`:''}
+      </div>`).join('')}
+  </div>`;
+}
+
+/* ---- map helpers ---- */
+function makeMap(elId,center,zoom){
+  const m = L.map(elId,{zoomControl:false, attributionControl:true}).setView(center,zoom);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{maxZoom:19, attribution:'© OpenStreetMap · © CARTO'}).addTo(m);
+  L.control.zoom({position:'bottomright'}).addTo(m);
+  maps.push(m); return m;
+}
+function storePin(s){
+  const c = catColor[s.cat]||'#0E7C5B';
+  return L.divIcon({className:'',html:`<div class="pin"><svg viewBox="0 0 24 24" width="30" height="36"><path fill="${c}" d="M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7z"/><circle cx="12" cy="9" r="3" fill="#fff"/></svg></div>`,iconSize:[30,36],iconAnchor:[15,33],popupAnchor:[0,-30]});
+}
+const userPin = () => L.divIcon({className:'',html:'<div class="upin"><span></span></div>',iconSize:[18,18],iconAnchor:[9,9]});
+function popHTML(s){
+  const offs = storeOffers(s.id);
+  return `<div style="min-width:210px">
+    <p class="font-display font-semibold text-[15px]">${s.name}</p>
+    <p class="text-xs text-mut mb-1.5">${s.cat} · ${s.area}</p>
+    <div class="flex items-center gap-2 text-xs mb-2"><span class="font-bold text-ink">${s.rating}</span>${stars(s.rating)}<span class="text-mut">·</span><span class="font-medium text-brand-700">${dstr(dist(s))}</span></div>
+    ${offs.length?`<div class="text-xs font-semibold text-white bg-amber2 inline-block px-2 py-1 rounded-lg mb-2.5">Up to ${Math.max(...offs.map(o=>discount(o.l)))}% OFF today</div>`:''}
+    <button onclick="location.hash='#/store/${s.id}'" class="w-full text-xs font-semibold bg-brand-600 text-white py-2 rounded-lg hover:bg-brand-700 transition">View Store</button>
+  </div>`;
+}
+function addStores(m,list){ list.forEach(s=>{ const mk=L.marker([s.lat,s.lng],{icon:storePin(s)}).addTo(m); mk.bindPopup(popHTML(s)); }); }
+const observeReveal = () => { const io=new IntersectionObserver(es=>es.forEach(e=>e.isIntersecting&&e.target.classList.add('in')),{threshold:.08}); document.querySelectorAll('.reveal').forEach(el=>io.observe(el)); };
+
+/* ---- reusable cards ---- */
+function storeCard(s){
+  const offs = storeOffers(s.id), best = offs.length ? Math.max(...offs.map(o=>discount(o.l))) : 0;
+  return `
+  <article class="reveal group bg-white rounded-2xl overflow-hidden shadow-soft hover:shadow-lift hover:-translate-y-1.5 transition-all duration-300 flex flex-col">
+    <div class="relative h-44 overflow-hidden">
+      <img src="${pic(s.img,640,420)}" alt="${s.name}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-500"/>
+      <span class="absolute top-3 left-3 text-[11px] font-semibold bg-white/90 backdrop-blur px-2.5 py-1 rounded-full flex items-center gap-1"><i data-lucide="${catIcon[s.cat]}" class="w-3 h-3 text-brand-700"></i>${s.cat}</span>
+      ${best?`<span class="absolute top-3 right-3 text-[11px] font-bold text-white bg-amber2 px-2.5 py-1 rounded-full">-${best}%</span>`:''}
+      <span class="absolute bottom-3 left-3 text-xs font-semibold text-white bg-ink/70 backdrop-blur px-2.5 py-1 rounded-full flex items-center gap-1"><i data-lucide="map-pin" class="w-3 h-3"></i>${dstr(dist(s))}</span>
+    </div>
+    <div class="p-4 flex flex-col flex-1">
+      <div class="flex items-start justify-between gap-2">
+        <h3 class="font-display font-semibold leading-snug">${s.name}</h3>
+        <span class="flex items-center gap-1 text-xs font-bold shrink-0"><i data-lucide="star" class="w-3.5 h-3.5 fill-amber-400 text-amber-400"></i>${s.rating}</span>
+      </div>
+      <p class="text-xs text-mut mt-1 flex items-start gap-1"><i data-lucide="map-pin" class="w-3 h-3 mt-0.5 shrink-0"></i>${s.address}</p>
+      <div class="flex items-center gap-3 text-xs mt-2.5">
+        <span class="flex items-center gap-1 ${s.open?'text-brand-700':'text-red-500'} font-medium"><span class="h-1.5 w-1.5 rounded-full ${s.open?'bg-brand-500':'bg-red-500'}"></span>${s.open?'Open now':'Closed'}</span>
+        <span class="text-mut flex items-center gap-1"><i data-lucide="package" class="w-3 h-3"></i>${storeProducts(s.id).length} products</span>
+      </div>
+      ${best?`<p class="mt-2 text-xs font-semibold text-amber2 flex items-center gap-1"><i data-lucide="badge-percent" class="w-3.5 h-3.5"></i>Today: up to ${best}% off selected items</p>`:''}
+      <a href="#/store/${s.id}" class="mt-4 text-sm font-semibold text-center bg-brand-50 text-brand-700 hover:bg-brand-600 hover:text-white py-2.5 rounded-xl transition flex items-center justify-center gap-1.5">View Store<i data-lucide="arrow-right" class="w-4 h-4"></i></a>
+    </div>
+  </article>`;
+}
+function listingCard(p,l,opts={}){
+  const s = sid(l[0]), d = dist(s), disc = l[2]?discount(l):0;
+  return `
+  <article class="reveal bg-white rounded-2xl shadow-soft hover:shadow-lift transition-all duration-300 hover:-translate-y-1 overflow-hidden flex flex-col sm:flex-row">
+    <a href="#/product/${p.id}" class="sm:w-48 h-44 sm:h-auto shrink-0 relative group">
+      <img src="${pic(p.seed,420,420)}" alt="${p.name}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-500"/>
+      ${disc?`<span class="absolute top-2.5 left-2.5 text-xs font-bold text-white bg-amber2 px-2 py-1 rounded-lg">-${disc}%</span>`:''}
+    </a>
+    <div class="p-4 flex-1 flex flex-col">
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <a href="#/product/${p.id}" class="font-display font-semibold hover:text-brand-700 transition">${p.name}</a>
+          <a href="#/store/${s.id}" class="text-xs text-mut flex items-center gap-1 mt-0.5 hover:text-brand-700"><i data-lucide="store" class="w-3 h-3"></i>${s.name} · ${s.cat}</a>
+        </div>
+        <button onclick="favP('${p.id}')" class="p-2 rounded-lg hover:bg-stone-100 transition shrink-0">${favIcon(S.favProducts.has(p.id),'w-4.5 h-4.5 w-5 h-5')}</button>
+      </div>
+      <div class="flex items-end gap-2 mt-3">
+        <span class="font-display text-2xl font-bold text-brand-700">${EGP(l[1])}</span>
+        ${l[2]?`<span class="text-sm text-mut line-through mb-0.5">${EGP(l[2])}</span>`:''}
+      </div>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs mt-3 text-mut">
+        <span class="flex items-center gap-1 font-semibold text-ink"><i data-lucide="map-pin" class="w-3.5 h-3.5 text-brand-600"></i>${dstr(d)}</span>
+        <span class="flex items-center gap-1"><i data-lucide="star" class="w-3.5 h-3.5 fill-amber-400 text-amber-400"></i>${s.rating}</span>
+        <span class="flex items-center gap-1 font-medium ${l[3]>0?'text-brand-700':'text-red-500'}"><span class="h-1.5 w-1.5 rounded-full ${l[3]>0?'bg-brand-500':'bg-red-500'}"></span>${l[3]>0?`In stock (${l[3]})`:'Out of stock'}</span>
+      </div>
+      <div class="flex gap-2 mt-4">
+        <a href="#/product/${p.id}" class="flex-1 text-center text-xs font-semibold border border-stone-200 hover:border-ink py-2.5 rounded-xl transition">View Product</a>
+        <a href="${gmap(s)}" target="_blank" class="flex-1 text-center text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 py-2.5 rounded-xl transition flex items-center justify-center gap-1.5"><i data-lucide="navigation" class="w-3.5 h-3.5"></i>Get Directions</a>
+      </div>
+    </div>
+  </article>`;
+}
+const gmap = s => `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`;
+const favIcon = (on,cls='w-5 h-5') => `<i data-lucide="heart" class="${cls} ${on?'fill-red-500 text-red-500':'text-stone-400'}"></i>`;
+function favS(id){ S.favStores.has(id)?S.favStores.delete(id):S.favStores.add(id); persist(); toast(S.favStores.has(id)?'Store saved to favorites':'Removed from favorites','heart'); route(); }
+function favP(id){ S.favProducts.has(id)?S.favProducts.delete(id):S.favProducts.add(id); persist(); toast(S.favProducts.has(id)?'Product saved to favorites':'Removed from favorites','heart'); route(); }
+function favO(k){ S.savedOffers.has(k)?S.savedOffers.delete(k):S.savedOffers.add(k); persist(); toast(S.savedOffers.has(k)?'Offer saved':'Offer removed','bookmark'); route(); }
+
+function offerCard(o,i){
+  const {p,l} = o, s = sid(l[0]), d = discount(l), key = p.id+'-'+l[0];
+  return `
+  <article class="reveal group bg-white rounded-2xl overflow-hidden shadow-soft hover:shadow-lift hover:-translate-y-1.5 transition-all duration-300">
+    <div class="relative h-40 overflow-hidden">
+      <img src="${pic(p.seed+'-off',640,400)}" alt="${p.name}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-500"/>
+      <div class="absolute inset-0 bg-gradient-to-t from-ink/60 to-transparent"></div>
+      <span class="absolute top-3 right-3 font-display font-bold text-white text-lg bg-amber2 rounded-xl px-3 py-1.5 shadow-lift">-${d}%</span>
+      <span class="absolute bottom-3 left-3 text-white text-xs font-semibold flex items-center gap-1"><i data-lucide="store" class="w-3.5 h-3.5"></i>${s.name}</span>
+    </div>
+    <div class="p-4">
+      <h3 class="font-semibold leading-snug">${p.name}</h3>
+      <div class="flex items-baseline gap-2 mt-1.5">
+        <span class="font-display text-xl font-bold text-brand-700">${EGP(l[1])}</span>
+        <span class="text-sm text-mut line-through">${EGP(l[2])}</span>
+      </div>
+      <div class="flex items-center gap-3 text-xs text-mut mt-2">
+        <span class="flex items-center gap-1"><i data-lucide="map-pin" class="w-3.5 h-3.5"></i>${dstr(dist(s))}</span>
+        <span class="flex items-center gap-1 text-red-500 font-medium"><i data-lucide="timer" class="w-3.5 h-3.5"></i>Ends ${expDays(i+3)}</span>
+      </div>
+      <div class="flex gap-2 mt-3.5">
+        <a href="#/product/${p.id}" class="flex-1 text-center text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 py-2.5 rounded-xl transition">View Offer</a>
+        <button onclick="favO('${key}')" class="px-3 border border-stone-200 rounded-xl hover:border-ink transition">${S.savedOffers.has(key)?'<i data-lucide=\"bookmark-check\" class=\"w-4 h-4 text-brand-700\"></i>':'<i data-lucide=\"bookmark\" class=\"w-4 h-4 text-stone-400\"></i>'}</button>
+      </div>
+    </div>
+  </article>`;
+}
+function productCard(p){
+  const l = p.listings.reduce((a,b)=>b[1]<a[1]?b:a,p.listings[0]), s=sid(l[0]), d=discount(l);
+  return `
+  <article class="reveal group bg-white rounded-2xl overflow-hidden shadow-soft hover:shadow-lift hover:-translate-y-1.5 transition-all duration-300 flex flex-col">
+    <div class="relative h-44 overflow-hidden">
+      <a href="#/product/${p.id}"><img src="${pic(p.seed,480,360)}" alt="${p.name}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-500"/></a>
+      ${d?`<span class="absolute top-3 left-3 text-xs font-bold text-white bg-amber2 px-2 py-1 rounded-lg">-${d}%</span>`:''}
+      <button onclick="favP('${p.id}')" class="absolute top-3 right-3 h-8 w-8 bg-white/90 backdrop-blur rounded-full flex items-center justify-center hover:scale-110 transition">${favIcon(S.favProducts.has(p.id),'w-4 h-4')}</button>
+    </div>
+    <div class="p-4 flex flex-col flex-1">
+      <span class="text-[11px] font-semibold text-brand-700 bg-brand-50 self-start px-2 py-0.5 rounded-full mb-1.5">${p.cat}</span>
+      <a href="#/product/${p.id}" class="font-semibold leading-snug hover:text-brand-700 transition">${p.name}</a>
+      <div class="flex items-end gap-2 mt-2"><span class="font-display text-lg font-bold">${EGP(l[1])}</span>${l[2]?`<span class="text-xs text-mut line-through mb-0.5">${EGP(l[2])}</span>`:''}</div>
+      <p class="text-xs text-mut mt-1 flex items-center gap-1"><i data-lucide="store" class="w-3 h-3"></i>Best at <b class="text-ink font-semibold">${s.name}</b> · ${dstr(dist(s))}</p>
+      <a href="#/product/${p.id}" class="mt-4 text-sm font-semibold text-center border border-stone-200 hover:bg-ink hover:text-white py-2.5 rounded-xl transition">Compare ${p.listings.length} store${p.listings.length>1?'s':''}</a>
+    </div>
+  </article>`;
+}
+const sectionHead = (kicker,title,sub,link) => `
+  <div class="reveal flex flex-wrap items-end justify-between gap-4 mb-8">
+    <div class="max-w-xl">
+      <p class="text-xs font-bold tracking-[.2em] uppercase text-brand-600 mb-2">${kicker}</p>
+      <h2 class="font-display text-2xl md:text-3xl font-bold">${title}</h2>
+      ${sub?`<p class="text-mut mt-2 text-sm md:text-base">${sub}</p>`:''}
+    </div>
+    ${link?`<a href="${link}" class="text-sm font-semibold text-brand-700 hover:text-brand-800 flex items-center gap-1.5 bg-white px-4 py-2.5 rounded-xl shadow-soft hover:shadow-lift transition">See all<i data-lucide="arrow-right" class="w-4 h-4"></i></a>`:''}
+  </div>`;
+
+/* ============================== PAGE: HOME ============================== */
+function pageHome(){
+  const near = [...STORES].sort((a,b)=>dist(a)-dist(b));
+  const app = $('#app');
+  app.innerHTML = `
+  ${navHTML('Home')}
+  <main class="pt-16">
+  <!-- HERO -->
+  <section class="relative overflow-hidden">
+    <div class="absolute -top-32 -right-32 h-96 w-96 rounded-full bg-brand-100 blur-3xl opacity-70"></div>
+    <div class="absolute top-40 -left-40 h-80 w-80 rounded-full bg-amber-100 blur-3xl opacity-60"></div>
+    <div class="max-w-7xl mx-auto px-4 lg:px-8 pt-12 pb-16 lg:pt-20 lg:pb-24 grid lg:grid-cols-2 gap-12 items-center relative">
+      <div>
+        <div class="rise inline-flex items-center gap-2 text-xs font-semibold text-brand-700 bg-brand-50 border border-brand-100 px-3.5 py-1.5 rounded-full mb-6" style="animation-delay:.05s">
+          <span class="h-2 w-2 rounded-full bg-brand-500 animate-pulse"></span>${STORES.length} stores live around ${S.loc.label.split(',')[0]}
+        </div>
+        <h1 class="rise font-display text-4xl sm:text-5xl lg:text-[3.4rem] font-bold leading-[1.12] tracking-tight" style="animation-delay:.15s">
+          Discover Stores.<br/><span class="text-brand-600">Compare Prices.</span><br/>Shop Smarter.
+        </h1>
+        <p class="rise text-mut mt-5 text-base md:text-lg max-w-lg leading-relaxed" style="animation-delay:.25s">Find nearby stores, discover products, compare prices, and find the best local offers — all in one place.</p>
+        <div class="rise mt-8 bg-white rounded-2xl shadow-lift p-2.5 flex flex-col sm:flex-row gap-2.5 max-w-xl" style="animation-delay:.35s">
+          <div class="flex items-center flex-1 gap-2 px-3">
+            <i data-lucide="search" class="w-5 h-5 text-stone-400 shrink-0"></i>
+            <input id="heroQ" placeholder="What are you looking for?" class="w-full py-3 outline-none text-sm placeholder:text-stone-400 bg-transparent"/>
+          </div>
+          <button onclick="detectLoc(event)" class="flex items-center justify-center gap-1.5 text-xs font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 transition px-4 py-3 rounded-xl shrink-0">
+            <i data-lucide="map-pin" class="w-4 h-4"></i>Use My Location</button>
+          <button onclick="goSearch()" class="bg-ink hover:bg-brand-700 active:scale-95 transition text-white text-sm font-semibold px-6 py-3 rounded-xl">Search</button>
+        </div>
+        <div class="rise flex flex-wrap gap-2 mt-3.5" style="animation-delay:.42s">
+          ${['iPhone charger','Vitamin C','Mixed grill platter','Linen dress','Basmati rice 5kg'].map(q=>`<button onclick="document.getElementById('heroQ').value='${q}'" class="text-xs text-mut bg-white border border-stone-200 hover:border-brand-400 hover:text-brand-700 px-3 py-1.5 rounded-full transition">${q}</button>`).join('')}
+        </div>
+        <div class="rise flex flex-wrap gap-8 mt-9" style="animation-delay:.5s">
+          ${[[STORES.length,'Nearby stores'],[PRODUCTS.length+'+','Products tracked'],['40+','Live offers'],['4.5★','Avg. rating']].map(([n,l])=>`<div><p class="font-display text-2xl font-bold text-brand-700">${n}</p><p class="text-xs text-mut mt-0.5">${l}</p></div>`).join('')}
+        </div>
+      </div>
+      <div class="relative rise" style="animation-delay:.3s">
+        <div class="rounded-3xl overflow-hidden shadow-lift border-4 border-white bg-white">
+          <div id="heromap" class="h-[340px] sm:h-[420px] z-0"></div>
+        </div>
+        <div class="floaty absolute -left-3 sm:-left-8 top-10 bg-white/95 backdrop-blur rounded-2xl shadow-lift p-3.5 flex items-center gap-3">
+          <span class="h-10 w-10 rounded-xl bg-brand-600 text-white flex items-center justify-center"><i data-lucide="pill" class="w-5 h-5"></i></span>
+          <div><p class="text-sm font-semibold">El Nour Pharmacy</p><p class="text-xs text-mut">412 m · <span class="text-amber2 font-bold">24% OFF</span> vitamins</p></div>
+        </div>
+        <div class="floaty2 absolute -right-2 sm:-right-6 bottom-12 bg-white/95 backdrop-blur rounded-2xl shadow-lift p-3.5 flex items-center gap-3">
+          <span class="h-10 w-10 rounded-xl bg-amber2 text-white flex items-center justify-center"><i data-lucide="smartphone" class="w-5 h-5"></i></span>
+          <div><p class="text-sm font-semibold">Cairo Mobile Hub</p><p class="text-xs text-mut">iPhone charger from <b class="text-ink">299 EGP</b></p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+  <!-- journey -->
+  <section class="max-w-7xl mx-auto px-4 lg:px-8 -mt-2 pb-14">
+    <div class="bg-white rounded-3xl shadow-soft px-6 py-7 overflow-hidden">${journeyStrip()}</div>
+  </section>
+  <!-- categories -->
+  <section class="max-w-7xl mx-auto px-4 lg:px-8 pb-16">
+    ${sectionHead('Browse by category','What do you need today?','Eight categories, hundreds of products, all within walking distance.','#/explore')}
+    <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+      ${S.categories.map((c,i)=>`
+        <a href="#/explore?cat=${encodeURIComponent(c)}" class="reveal bg-white rounded-2xl p-4 flex flex-col items-center gap-2.5 shadow-soft hover:shadow-lift hover:-translate-y-1 hover:text-brand-700 transition-all duration-300 text-center" style="transition-delay:${i*40}ms">
+          <span class="h-11 w-11 rounded-xl flex items-center justify-center" style="background:${catColor[c]}1a"><i data-lucide="${catIcon[c]}" class="w-5 h-5" style="color:${catColor[c]}"></i></span>
+          <span class="text-xs font-semibold leading-tight">${c}</span>
+        </a>`).join('')}
+    </div>
+  </section>
+  <!-- stores near you -->
+  <section class="max-w-7xl mx-auto px-4 lg:px-8 pb-16">
+    ${sectionHead('Right around the corner','Stores Near You','Sorted by distance from your location. Filter by what matters to you.','#/explore')}
+    <div id="homeStores" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">${near.slice(0,6).map(storeCard).join('')}</div>
+  </section>
+  <!-- offers -->
+  <section class="bg-cream border-y border-stone-200/70 py-16">
+    <div class="max-w-7xl mx-auto px-4 lg:px-8">
+      ${sectionHead('Save while you shop','Today\'s Local Offers','Real discounts from real stores near you — updated daily.','#/offers')}
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        ${allOffers().slice(0,4).map((o,i)=>offerCard(o,i)).join('')}
+      </div>
+    </div>
+  </section>
+  <!-- how it works -->
+  <section id="how" class="max-w-7xl mx-auto px-4 lg:px-8 py-20">
+    ${sectionHead('How it works','From search to storefront in four steps','SHOPER was built around one simple promise: never overpay at a store around the corner again.')}
+    <div class="grid md:grid-cols-4 gap-6">
+      ${[
+        ['1','map-pin','Detect your location','One tap and SHOPER maps every store around you — no address typing needed.'],
+        ['2','radar','Explore nearby stores','Browse stores with real ratings, distances, opening hours and live offers.'],
+        ['3','git-compare-arrows','Compare prices','Search any product and instantly see which store sells it cheapest.'],
+        ['4','navigation','Get directions','Pick your winner and navigate straight to the storefront.']
+      ].map(([n,ic,t,d],i)=>`
+      <div class="reveal relative bg-white rounded-2xl p-6 shadow-soft hover:shadow-lift hover:-translate-y-1.5 transition-all duration-300" style="transition-delay:${i*80}ms">
+        <span class="absolute -top-3.5 left-6 font-display font-bold text-sm bg-brand-600 text-white h-8 px-3 rounded-lg flex items-center shadow-soft">STEP ${n}</span>
+        <span class="h-12 w-12 rounded-2xl bg-brand-50 text-brand-700 flex items-center justify-center mt-2"><i data-lucide="${ic}" class="w-6 h-6"></i></span>
+        <h3 class="font-display font-semibold text-lg mt-4">${t}</h3>
+        <p class="text-sm text-mut mt-2 leading-relaxed">${d}</p>
+      </div>`).join('')}
+    </div>
+  </section>
+  <!-- CTA -->
+  <section class="max-w-7xl mx-auto px-4 lg:px-8 pb-4">
+    <div class="reveal relative overflow-hidden rounded-3xl bg-ink text-white px-8 py-14 text-center">
+      <div class="absolute -top-24 right-10 h-64 w-64 rounded-full bg-brand-600/30 blur-3xl"></div>
+      <div class="absolute -bottom-24 left-10 h-64 w-64 rounded-full bg-amber2/20 blur-3xl"></div>
+      <h2 class="font-display text-3xl md:text-4xl font-bold relative">Your best deal is ${dstr(dist(near[0]))} away.</h2>
+      <p class="text-stone-300 mt-3 max-w-md mx-auto relative">Start exploring now — no account needed to discover and compare.</p>
+      <div class="flex flex-wrap justify-center gap-3 mt-7 relative">
+        <a href="#/explore" class="bg-brand-500 hover:bg-brand-600 text-white font-semibold px-7 py-3.5 rounded-xl transition inline-flex items-center gap-2"><i data-lucide="radar" class="w-4 h-4"></i>Explore Nearby Stores</a>
+        <a href="#/register?type=owner" class="bg-white/10 hover:bg-white/20 font-semibold px-7 py-3.5 rounded-xl transition">Own a store? List it free</a>
+      </div>
+    </div>
+  </section>
+  ${footerHTML()}
+  </main>`;
+  // hero map
+  const m = makeMap('heromap',[S.loc.lat,S.loc.lng],14);
+  L.marker([S.loc.lat,S.loc.lng],{icon:userPin()}).addTo(m).bindPopup('<b>You are here</b><br>'+S.loc.label);
+  addStores(m, near.slice(0,7));
+  setTimeout(()=>m.invalidateSize(),150);
+}
+
+/* ============================== PAGE: EXPLORE ============================== */
+function pageExplore(qs){
+  const q = new URLSearchParams(qs||'');
+  const state = { cat: q.get('cat')||'All', open:false, offs:false, maxD:10, minR:0 };
+  const near = () => STORES.filter(s =>
+    (state.cat==='All'||s.cat===state.cat) &&
+    (!state.open||s.open) && (!state.offs||storeOffers(s.id).length) &&
+    dist(s)<=state.maxD && s.rating>=state.minR
+  ).sort((a,b)=>dist(a)-dist(b));
+  $('#app').innerHTML = `
+  ${navHTML('Explore Stores')}
+  <main class="pt-16 max-w-[1500px] mx-auto px-4 lg:px-6 py-6">
+    <div class="flex flex-wrap items-end justify-between gap-3 mb-5">
+      <div>
+        <h1 class="font-display text-2xl md:text-3xl font-bold">Explore Stores</h1>
+        <p class="text-sm text-mut mt-1 flex items-center gap-1.5"><i data-lucide="map-pin" class="w-3.5 h-3.5 text-brand-600"></i>Searching around <b class="text-ink">${S.loc.label}</b></p>
+      </div>
+      <button onclick="detectLoc(event)" class="text-xs font-semibold text-brand-700 bg-brand-50 border border-brand-100 px-3.5 py-2 rounded-full hover:bg-brand-100 transition flex items-center gap-1.5"><i data-lucide="locate-fixed" class="w-3.5 h-3.5"></i>Use My Location</button>
+    </div>
+    <div class="grid lg:grid-cols-[390px,1fr] gap-5">
+      <!-- left: filters + list -->
+      <div class="flex flex-col gap-4 order-2 lg:order-1">
+        <div class="bg-white rounded-2xl shadow-soft p-4">
+          <div class="flex items-center justify-between mb-3"><p class="text-sm font-semibold flex items-center gap-1.5"><i data-lucide="sliders-horizontal" class="w-4 h-4 text-brand-600"></i>Filters</p>
+          <button onclick="resetExp()" class="text-xs text-mut hover:text-ink">Reset</button></div>
+          <div class="flex flex-wrap gap-1.5 mb-3">
+            ${['All',...S.categories].map(c=>`<button data-cat="${c}" onclick="expCat('${c}')" class="chip ${state.cat===c?'active':''} text-[11px] font-semibold border border-stone-200 px-2.5 py-1.5 rounded-full hover:border-brand-400 transition">${c}</button>`).join('')}
+          </div>
+          <label class="flex items-center justify-between text-xs py-1.5"><span class="font-medium">Distance ≤ <b id="dval" class="text-brand-700">${state.maxD} km</b></span></label>
+          <input type="range" min="0.5" max="10" step="0.5" value="${state.maxD}" oninput="expDist(this.value)" class="w-full"/>
+          <div class="flex flex-wrap gap-x-5 gap-y-2 mt-3">
+            <label class="flex items-center gap-2 text-xs font-medium cursor-pointer"><input type="checkbox" ${state.open?'checked':''} onchange="expOpen(this.checked)" class="accent-brand-600 w-3.5 h-3.5">Open now</label>
+            <label class="flex items-center gap-2 text-xs font-medium cursor-pointer"><input type="checkbox" ${state.offs?'checked':''} onchange="expOff(this.checked)" class="accent-brand-600 w-3.5 h-3.5">Offers available</label>
+          </div>
+          <div class="mt-3 flex items-center gap-2">
+            <span class="text-xs font-medium">Min rating</span>
+            ${[0,4,4.5].map(r=>`<button onclick="expRate(${r})" class="chip ${state.minR===r?'active':''} text-[11px] font-semibold border border-stone-200 px-2.5 py-1 rounded-full">${r===0?'Any':r+'★ +'}</button>`).join('')}
+          </div>
+        </div>
+        <div id="expList" class="flex flex-col gap-3.5 lg:max-h-[calc(100vh-320px)] lg:overflow-y-auto lg:pr-1"></div>
+      </div>
+      <!-- right: map -->
+      <div class="order-1 lg:order-2">
+        <div class="relative bg-white rounded-2xl shadow-soft overflow-hidden">
+          <div class="absolute top-3 left-3 z-[500] flex gap-2">
+            <button onclick="searchArea()" class="text-xs font-semibold bg-white shadow-soft px-3.5 py-2.5 rounded-xl hover:bg-brand-50 transition flex items-center gap-1.5"><i data-lucide="scan-search" class="w-4 h-4 text-brand-700"></i>Search this area</button>
+          </div>
+          <div id="expmap" class="h-[420px] lg:h-[calc(100vh-150px)] z-0"></div>
+          <div id="expCount" class="absolute bottom-4 left-4 z-[500] text-xs font-semibold bg-ink/80 backdrop-blur text-white px-3.5 py-2 rounded-full"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+  ${footerHTML()}`;
+  window._exp = state;
+  drawExpMap(near());
+  drawExpList(near());
+}
+function drawExpMap(list){
+  if(window._expmap) window._expmap.remove();
+  const m = makeMap('expmap',[S.loc.lat,S.loc.lng],13);
+  window._expmap = m;
+  L.marker([S.loc.lat,S.loc.lng],{icon:userPin(),zIndexOffset:1000}).addTo(m).bindPopup('<b>You are here</b>');
+  addStores(m,list);
+  setTimeout(()=>m.invalidateSize(),100);
+}
+function drawExpList(list){
+  $('#expCount').textContent = list.length + ' stores in view';
+  $('#expList').innerHTML = list.length ? list.map(s=>`
+    <article onclick="focusStore(${s.id})" class="group bg-white rounded-2xl p-3.5 shadow-soft hover:shadow-lift hover:-translate-y-0.5 transition-all cursor-pointer flex gap-3.5">
+      <img src="${pic(s.img,200,200)}" class="h-20 w-20 rounded-xl object-cover shrink-0" loading="lazy"/>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-start justify-between gap-2">
+          <h3 class="font-semibold text-sm truncate group-hover:text-brand-700 transition">${s.name}</h3>
+          <span class="text-[11px] font-bold text-brand-700 bg-brand-50 px-2 py-0.5 rounded-full shrink-0">${dstr(dist(s))}</span>
+        </div>
+        <p class="text-[11px] text-mut mt-0.5">${s.cat} · ${s.area}</p>
+        <div class="flex items-center gap-1.5 mt-1.5 text-[11px]">
+          <i data-lucide="star" class="w-3 h-3 fill-amber-400 text-amber-400"></i><b>${s.rating}</b>
+          <span class="${s.open?'text-brand-700':'text-red-500'} font-medium flex items-center gap-1"><span class="h-1.5 w-1.5 rounded-full ${s.open?'bg-brand-500':'bg-red-500'}"></span>${s.open?'Open':'Closed'}</span>
+          ${storeOffers(s.id).length?`<span class="text-amber2 font-bold">-${Math.max(...storeOffers(s.id).map(o=>discount(o.l)))}%</span>`:''}
+        </div>
+        <p class="text-[11px] text-mut mt-1 truncate"><i data-lucide="map-pin" class="w-3 h-3 inline"></i> ${s.address}</p>
+      </div>
+    </article>`).join('')
+    : `<div class="bg-white rounded-2xl p-10 text-center shadow-soft"><i data-lucide="store-search" class="w-10 h-10 mx-auto text-stone-300"></i><p class="text-sm font-semibold mt-3">No stores match your filters</p><p class="text-xs text-mut mt-1">Try widening the distance or clearing filters.</p></div>`;
+  lucide.createIcons();
+}
+function focusStore(id){
+  const s = sid(id), m = window._expmap;
+  m.flyTo([s.lat,s.lng],16,{duration:.7});
+  setTimeout(()=>{ STORES.filter(x=>listHas(x)).forEach(()=>{}); m.eachLayer(l=>{ if(l.getPopup && l.getPopup() && l.getPopup().getContent().includes('>'+s.name+'<')) l.openPopup(); }); },750);
+  function listHas(){return true}
+}
+function expCat(c){ window._exp.cat=c; refreshExp(); }
+function expDist(v){ window._exp.maxD=+v; $('#dval').textContent=v+' km'; refreshExp(true); }
+function expOpen(v){ window._exp.open=v; refreshExp(); }
+function expOff(v){ window._exp.offs=v; refreshExp(); }
+function expRate(v){ window._exp.minR=v; refreshExp(); }
+function resetExp(){ location.hash='#/explore'; }
+function refreshExp(keepList){
+  const st = window._exp;
+  const list = STORES.filter(s=>(st.cat==='All'||s.cat===st.cat)&&(!st.open||s.open)&&(!st.offs||storeOffers(s.id).length)&&dist(s)<=st.maxD&&s.rating>=st.minR).sort((a,b)=>dist(a)-dist(b));
+  document.querySelectorAll('[data-cat]').forEach(b=>b.classList.toggle('active', b.dataset.cat===st.cat));
+  drawExpMap(list); drawExpList(list);
+}
+function searchArea(){
+  const c = window._expmap.getCenter(), st = window._exp;
+  const list = STORES.filter(s=>(st.cat==='All'||s.cat===st.cat)&&hav(c.lat,c.lng,s.lat,s.lng)<=3).sort((a,b)=>hav(c.lat,c.lng,a.lat,a.lng)-hav(c.lat,c.lng,b.lat,b.lng));
+  drawExpList(list); toast(list.length+' stores found within 3 km of map center','scan-search');
+}
+
+/* ============================== PAGE: SEARCH / PRODUCTS ============================== */
+function pageSearch(qs){
+  const q = new URLSearchParams(qs||'');
+  const query = (q.get('q')||'').trim();
+  const sort = q.get('sort')||'nearest';
+  if(query) logSearch(query);
+  const ql = query.toLowerCase();
+  let results = PRODUCTS.flatMap(p=>p.listings.map(l=>({p,l})));
+  if(ql) results = results.filter(({p})=>p.name.toLowerCase().includes(ql)||p.cat.toLowerCase().includes(ql)||sid(l[0]).name.toLowerCase().includes(ql)||sid(l[0]).cat.toLowerCase().includes(ql));
+  results.forEach(r=>r.d=dist(sid(r.l[0])), r.disc=r.l[2]?discount(r.l):0, r.rate=sid(r.l[0]).rating);
+  const cmp = { nearest:(a,b)=>a.d-b.d, cheapest:(a,b)=>a.l[1]-b.l[1], rated:(a,b)=>b.rate-a.rate, offer:(a,b)=>b.disc-a.disc };
+  results.sort(cmp[sort]||cmp.nearest);
+  $('#app').innerHTML = `
+  ${navHTML('Products')}
+  <main class="pt-16 max-w-7xl mx-auto px-4 lg:px-8 py-8">
+    <div class="reveal max-w-2xl">
+      <p class="text-xs font-bold tracking-[.2em] uppercase text-brand-600 mb-2">Product Search</p>
+      <h1 class="font-display text-2xl md:text-3xl font-bold">${query?`Results for “${esc(query)}”`:'All Products Nearby'}</h1>
+      <p class="text-sm text-mut mt-1.5">${results.length} offers found across ${new Set(results.map(r=>r.l[0])).size} stores near you</p>
+    </div>
+    <div class="reveal mt-6 bg-white rounded-2xl shadow-soft p-3 flex flex-col sm:flex-row gap-2.5">
+      <div class="flex items-center flex-1 gap-2 px-3 border border-stone-200 rounded-xl">
+        <i data-lucide="search" class="w-4.5 h-4.5 w-5 h-5 text-stone-400"></i>
+        <input id="sq" value="${esc(query)}" placeholder="Search products, stores or categories…" onkeydown="if(event.key==='Enter')sGo()" class="w-full py-3 text-sm outline-none bg-transparent"/>
+      </div>
+      <select id="ssort" onchange="sSort()" class="text-sm font-medium border border-stone-200 rounded-xl px-3 py-3 outline-none bg-cream cursor-pointer">
+        <option value="nearest" ${sort==='nearest'?'selected':''}>Sort: Nearest first</option>
+        <option value="cheapest" ${sort==='cheapest'?'selected':''}>Sort: Lowest price</option>
+        <option value="rated" ${sort==='rated'?'selected':''}>Sort: Highest rated</option>
+        <option value="offer" ${sort==='offer'?'selected':''}>Sort: Best offer</option>
+      </select>
+      <button onclick="sGo()" class="bg-ink text-white text-sm font-semibold px-6 py-3 rounded-xl hover:bg-brand-700 active:scale-95 transition">Search</button>
+    </div>
+    ${query?`<div class="flex flex-wrap gap-2 mt-4">${['iPhone charger','vitamin','sofa','rice','dress','serum','grill','sneakers'].filter(x=>!ql.includes(x)).slice(0,5).map(x=>`<a href="#/search?q=${encodeURIComponent(x)}" class="text-xs text-mut bg-white border border-stone-200 hover:border-brand-400 hover:text-brand-700 px-3 py-1.5 rounded-full transition">Try “${x}”</a>`).join('')}</div>`:''}
+    <div class="mt-6 grid gap-4">
+      ${results.length?results.slice(0,40).map(r=>listingCard(r.p,r.l)).join('')
+      :`<div class="bg-white rounded-3xl p-14 text-center shadow-soft"><i data-lucide="search-x" class="w-12 h-12 mx-auto text-stone-300"></i><h3 class="font-display font-semibold text-lg mt-4">Nothing found for “${esc(query)}”</h3><p class="text-sm text-mut mt-1.5">Try a different keyword, or browse the offers page for inspiration.</p><a href="#/offers" class="inline-block mt-5 text-sm font-semibold bg-brand-600 text-white px-6 py-3 rounded-xl hover:bg-brand-700 transition">Browse Local Offers</a></div>`}
+    </div>
+  </main>
+  ${footerHTML()}`;
+}
+function sGo(){ const q=$('#sq').value.trim(); location.hash='#/search'+(q?'?q='+encodeURIComponent(q):''); }
+function sSort(){ const q=new URLSearchParams(location.hash.split('?')[1]||''); q.set('sort',$('#ssort').value); location.hash='#/search?'+q.toString(); }
+
+/* ============================== PAGE: COMPARE ============================== */
+function pageCompare(pid){
+  const p = PRODUCTS.find(x=>x.id===pid); if(!p) return pageHome();
+  track('product',p.id,p.name);
+  const ls = [...p.listings].sort((a,b)=>a[1]-b[1]);
+  const min = ls[0][1], max = Math.max(...ls.map(l=>l[1]));
+  $('#app').innerHTML = `
+  ${navHTML('Products')}
+  <main class="pt-16 max-w-7xl mx-auto px-4 lg:px-8 py-8">
+    <nav class="reveal text-xs text-mut flex items-center gap-1.5 mb-6"><a href="#/search" class="hover:text-brand-700">Products</a><i data-lucide="chevron-right" class="w-3 h-3"></i><span class="text-ink font-medium">${p.name}</span></nav>
+    <div class="reveal bg-white rounded-3xl shadow-soft overflow-hidden">
+      <div class="grid md:grid-cols-[300px,1fr]">
+        <img src="${pic(p.seed,600,600)}" class="h-64 md:h-full w-full object-cover" alt="${p.name}"/>
+        <div class="p-6 md:p-8">
+          <span class="text-[11px] font-semibold text-brand-700 bg-brand-50 px-2.5 py-1 rounded-full">${p.cat}</span>
+          <h1 class="font-display text-2xl md:text-3xl font-bold mt-3">${p.name}</h1>
+          <p class="text-sm text-mut mt-2 leading-relaxed">${p.desc}</p>
+          <div class="flex flex-wrap items-center gap-x-6 gap-y-2 mt-4 text-sm">
+            <span class="flex items-center gap-2"><span class="font-display font-bold text-xl text-brand-700">${EGP(min)}</span><span class="text-xs text-mut">best price</span></span>
+            <span class="flex items-center gap-1.5 text-mut"><i data-lucide="store" class="w-4 h-4"></i>${ls.length} stores sell this</span>
+            <span class="flex items-center gap-1.5 text-mut"><i data-lucide="map-pin" class="w-4 h-4"></i>closest ${dstr(dist(sid(ls.reduce((a,b)=>dist(sid(a[0]))<dist(sid(b[0]))?a:b,ls)[0])))}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <h2 class="reveal font-display text-xl md:text-2xl font-bold mt-10 mb-1">Compare Prices</h2>
+    <p class="reveal text-sm text-mut mb-6">Every nearby store selling ${p.name} — best offer highlighted.</p>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      ${ls.map((l,i)=>{ const s=sid(l[0]), d=discount(l), best=l[1]===min;
+        return `<article class="reveal bg-white rounded-2xl shadow-soft hover:shadow-lift transition-all hover:-translate-y-1 p-5 relative overflow-hidden ${best?'ring-2 ring-brand-500':''}" style="transition-delay:${i*60}ms">
+          ${best?`<span class="absolute top-0 right-0 text-[10px] font-bold text-white bg-brand-600 px-3 py-1 rounded-bl-xl uppercase tracking-wide">Best price</span>`:''}
+          <div class="flex items-center gap-3">
+            <img src="${pic(s.img,120,120)}" class="h-12 w-12 rounded-xl object-cover" loading="lazy"/>
+            <div><a href="#/store/${s.id}" class="font-semibold text-sm hover:text-brand-700 transition">${s.name}</a>
+            <p class="text-xs text-mut flex items-center gap-1 mt-0.5"><i data-lucide="map-pin" class="w-3 h-3"></i>${dstr(dist(s))} · ${s.rating} ★</p></div>
+          </div>
+          <div class="flex items-baseline gap-2 mt-4">
+            <span class="font-display text-2xl font-bold ${best?'text-brand-700':'text-ink'}">${EGP(l[1])}</span>
+            ${l[2]?`<span class="text-sm text-mut line-through">${EGP(l[2])}</span><span class="text-xs font-bold text-amber2 bg-amber-50 px-1.5 py-0.5 rounded">-${d}%</span>`:''}
+          </div>
+          <div class="h-2 bg-stone-100 rounded-full mt-3 overflow-hidden"><div class="h-full rounded-full ${best?'bg-brand-500':'bg-stone-300'}" style="width:${Math.round(30+70*(l[1]-min)/Math.max(1,max-min))}%"></div></div>
+          <p class="text-xs font-medium mt-2.5 ${l[3]>0?'text-brand-700':'text-red-500'} flex items-center gap-1"><span class="h-1.5 w-1.5 rounded-full ${l[3]>0?'bg-brand-500':'bg-red-500'}"></span>${l[3]>0?'In stock · '+l[3]+' units':'Out of stock'}</p>
+          <div class="flex gap-2 mt-4">
+            <a href="#/product/${p.id}" class="flex-1 text-center text-xs font-semibold border border-stone-200 hover:border-ink py-2.5 rounded-xl transition">View Product</a>
+            <a href="${gmap(s)}" target="_blank" class="flex-1 text-center text-xs font-semibold bg-brand-600 text-white hover:bg-brand-700 py-2.5 rounded-xl transition flex items-center justify-center gap-1"><i data-lucide="navigation" class="w-3.5 h-3.5"></i>Go</a>
+          </div>
+        </article>`;}).join('')}
+    </div>
+  </main>
+  ${footerHTML()}`;
+}
+
+/* ============================== PAGE: STORE DETAILS ============================== */
+function pageStore(id){
+  const s = sid(+id); if(!s) return pageHome();
+  track('store',s.id,s.name);
+  const prods = storeProducts(s.id), offs = storeOffers(s.id);
+  const state = { q:'', cat:'All' };
+  $('#app').innerHTML = `
+  ${navHTML('')}
+  <main class="pt-16">
+    <div class="relative h-56 sm:h-72">
+      <img src="${pic(s.img+'-cover',1600,500)}" class="w-full h-full object-cover" alt="cover"/>
+      <div class="absolute inset-0 bg-gradient-to-t from-ink/70 to-ink/10"></div>
+      <a href="#/explore" class="absolute top-5 left-5 text-sm font-semibold text-white bg-ink/50 backdrop-blur px-4 py-2 rounded-xl hover:bg-ink/70 transition flex items-center gap-1.5"><i data-lucide="arrow-left" class="w-4 h-4"></i>Back to Explore</a>
+    </div>
+    <div class="max-w-7xl mx-auto px-4 lg:px-8">
+      <div class="bg-white rounded-3xl shadow-lift -mt-16 relative p-6 md:p-8 grid lg:grid-cols-[1fr,340px] gap-8">
+        <div>
+          <div class="flex flex-wrap items-start gap-5">
+            <img src="${pic(s.img,160,160)}" class="h-20 w-20 rounded-2xl object-cover shadow-soft border-4 border-white -mt-14" alt="logo"/>
+            <div class="flex-1 min-w-[220px]">
+              <div class="flex flex-wrap items-center gap-2.5">
+                <h1 class="font-display text-2xl md:text-3xl font-bold">${s.name}</h1>
+                <span class="text-xs font-semibold px-2.5 py-1 rounded-full text-white" style="background:${catColor[s.cat]}">${s.cat}</span>
+                <span class="text-xs font-semibold flex items-center gap-1 ${s.open?'text-brand-700':'text-red-500'}"><span class="h-2 w-2 rounded-full ${s.open?'bg-brand-500':'bg-red-500'}"></span>${s.open?'Open now':'Closed'}</span>
+              </div>
+              <div class="flex items-center gap-2 mt-2 text-sm"><b>${s.rating}</b>${stars(s.rating)}<span class="text-mut text-xs">(${s.rev} reviews)</span></div>
+              <p class="text-sm text-mut mt-2.5 max-w-lg leading-relaxed">${s.desc}</p>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6">
+            ${[['map-pin',dstr(dist(s)),'distance'],['package',prods.length+'','products'],['badge-percent',offs.length+'','live offers'],['clock',s.hours,'hours']].map(([ic,v,l])=>`
+              <div class="bg-cream rounded-2xl p-3.5 text-center"><i data-lucide="${ic}" class="w-4.5 h-4.5 w-5 h-5 mx-auto text-brand-600"></i><p class="font-display font-bold mt-1.5 text-sm">${v}</p><p class="text-[11px] text-mut uppercase tracking-wide">${l}</p></div>`).join('')}
+          </div>
+          <div class="flex flex-wrap gap-2.5 mt-6">
+            <a href="${gmap(s)}" target="_blank" class="bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold px-5 py-3 rounded-xl transition flex items-center gap-2"><i data-lucide="navigation" class="w-4 h-4"></i>Get Directions</a>
+            <a href="https://wa.me/${s.phone.replace(/[^0-9]/g,'')}" target="_blank" class="bg-[#25D366] hover:brightness-95 text-white text-sm font-semibold px-5 py-3 rounded-xl transition flex items-center gap-2"><i data-lucide="message-circle" class="w-4 h-4"></i>WhatsApp</a>
+            <a href="tel:${s.phone.replace(/\s/g,'')}" class="border border-stone-200 hover:border-ink text-sm font-semibold px-5 py-3 rounded-xl transition flex items-center gap-2"><i data-lucide="phone" class="w-4 h-4"></i>${s.phone}</a>
+            <button onclick="favS(${s.id})" class="border border-stone-200 hover:border-ink text-sm font-semibold px-4 py-3 rounded-xl transition flex items-center gap-2">${favIcon(S.favStores.has(s.id),'w-4 h-4')}${S.favStores.has(s.id)?'Saved':'Save'}</button>
+          </div>
+        </div>
+        <aside class="bg-cream rounded-2xl p-5 self-start">
+          <h3 class="font-display font-semibold mb-4">Store Information</h3>
+          <ul class="space-y-3.5 text-sm">
+            <li class="flex gap-2.5"><i data-lucide="map-pin" class="w-4 h-4 text-brand-600 mt-0.5 shrink-0"></i><span>${s.address}<br/><span class="text-xs text-mut">${dstr(dist(s))} from your location</span></span></li>
+            <li class="flex gap-2.5"><i data-lucide="clock" class="w-4 h-4 text-brand-600 mt-0.5 shrink-0"></i><span>${s.hours}</span></li>
+            <li class="flex gap-2.5"><i data-lucide="phone" class="w-4 h-4 text-brand-600 mt-0.5 shrink-0"></i><span>${s.phone}</span></li>
+            <li class="flex gap-2.5"><i data-lucide="globe" class="w-4 h-4 text-brand-600 mt-0.5 shrink-0"></i><span class="flex gap-2">${['facebook','instagram','twitter'].map(x=>`<a href="#/store/${s.id}" class="h-7 w-7 bg-white rounded-lg flex items-center justify-center hover:bg-brand-50"><i data-lucide="${x}" class="w-3.5 h-3.5"></i></a>`).join('')}</span></li>
+          </ul>
+          <div id="minimap" class="h-40 rounded-xl mt-5 z-0"></div>
+        </aside>
+      </div>
+
+      <!-- Products -->
+      <section class="mt-12">
+        <div class="flex flex-wrap items-end justify-between gap-3 mb-6">
+          <div><h2 class="font-display text-xl md:text-2xl font-bold">Store Products</h2><p class="text-sm text-mut mt-1">${prods.length} products in catalog</p></div>
+          <div class="flex gap-2">
+            <input id="spq" oninput="spFilter()" placeholder="Search in store…" class="text-sm border border-stone-200 rounded-xl px-4 py-2.5 outline-none focus:border-brand-500 bg-white"/>
+            <select id="spc" onchange="spFilter()" class="text-sm border border-stone-200 rounded-xl px-3 py-2.5 outline-none bg-white cursor-pointer">
+              <option>All</option>${[...new Set(prods.map(p=>p.cat))].map(c=>`<option>${c}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div id="spgrid" class="grid grid-cols-2 lg:grid-cols-4 gap-4"></div>
+      </section>
+
+      <!-- Offers -->
+      <section class="mt-14 pb-6">
+        <h2 class="font-display text-xl md:text-2xl font-bold mb-1">Store Offers</h2>
+        <p class="text-sm text-mut mb-6">${offs.length} active discounts — grab them before they expire.</p>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          ${offs.length?offs.map((o,i)=>{const d=discount(o.l), key=o.p.id+'-'+s.id; return `
+          <article class="reveal bg-white rounded-2xl shadow-soft hover:shadow-lift hover:-translate-y-1 transition-all p-5 relative overflow-hidden">
+            <span class="absolute -right-7 top-5 rotate-45 text-[11px] font-bold text-white bg-amber2 py-1 px-9">-${d}%</span>
+            <div class="flex gap-4">
+              <img src="${pic(o.p.seed,160,160)}" class="h-20 w-20 rounded-xl object-cover" loading="lazy"/>
+              <div><h3 class="font-semibold text-sm leading-snug">${o.p.name}</h3>
+              <p class="text-xs text-mut mt-1"><span class="line-through">${EGP(o.l[2])}</span> → <b class="text-brand-700 text-sm">${EGP(o.l[1])}</b></p></div>
+            </div>
+            <div class="flex items-center justify-between mt-4 text-xs text-mut">
+              <span class="flex items-center gap-1"><i data-lucide="timer" class="w-3.5 h-3.5 text-red-500"></i>Ends ${expDays(i+4)}</span>
+              <a href="#/product/${o.p.id}" class="font-semibold text-brand-700 hover:text-brand-800">View Offer →</a>
+            </div>
+          </article>`;}).join('')
+          :`<div class="col-span-full bg-white rounded-2xl p-10 text-center shadow-soft"><i data-lucide="badge-percent" class="w-9 h-9 mx-auto text-stone-300"></i><p class="text-sm font-semibold mt-3">No active offers right now</p></div>`}
+        </div>
+      </section>
+    </div>
+  </main>
+  ${footerHTML()}`;
+  window._sp = {s,state};
+  const m = makeMap('minimap',[s.lat,s.lng],16); L.marker([s.lat,s.lng],{icon:storePin(s)}).addTo(m); setTimeout(()=>m.invalidateSize(),100);
+  spRender();
+  function spRenderLocal(){}
+  function spRender(){}
+}
+function spRender(){
+  const {s,state} = window._sp;
+  let list = storeProducts(s.id).filter(p=>(state.cat==='All'||p.cat===state.cat)&&p.name.toLowerCase().includes(state.q));
+  $('#spgrid').innerHTML = list.length?list.map(p=>{
+    const l = p.listings.find(x=>x[0]===s.id), d = l[2]?discount(l):0;
+    return `<article class="reveal bg-white rounded-2xl overflow-hidden shadow-soft hover:shadow-lift hover:-translate-y-1 transition-all group">
+      <div class="relative h-36 overflow-hidden"><img src="${pic(p.seed,360,280)}" class="w-full h-full object-cover group-hover:scale-105 transition duration-500" loading="lazy"/>
+      ${d?`<span class="absolute top-2.5 left-2.5 text-[11px] font-bold text-white bg-amber2 px-2 py-0.5 rounded-lg">-${d}%</span>`:''}
+      <button onclick="favP('${p.id}')" class="absolute top-2.5 right-2.5 h-7 w-7 bg-white/90 rounded-full flex items-center justify-center">${favIcon(S.favProducts.has(p.id),'w-3.5 h-3.5')}</button></div>
+      <div class="p-3.5">
+        <a href="#/product/${p.id}" class="font-semibold text-sm leading-snug hover:text-brand-700 transition line-clamp-2 block">${p.name}</a>
+        <div class="flex items-baseline gap-1.5 mt-2"><span class="font-display font-bold text-brand-700">${EGP(l[1])}</span>${l[2]?`<span class="text-[11px] text-mut line-through">${EGP(l[2])}</span>`:''}</div>
+        <p class="text-[11px] mt-1.5 font-medium ${l[3]>0?'text-brand-700':'text-red-500'}">${l[3]>0?'In stock':'Out of stock'}</p>
+      </div>
+    </article>`;}).join('')
+    :`<p class="col-span-full text-sm text-mut text-center py-10">No products match your search in this store.</p>`;
+  lucide.createIcons(); observeReveal();
+}
+function spFilter(){ window._sp.state.q = $('#spq').value.toLowerCase(); window._sp.state.cat = $('#spc').value; spRender(); }
+
+/* ============================== PAGE: PRODUCT DETAILS ============================== */
+function pageProduct(pid){
+  const p = PRODUCTS.find(x=>x.id===pid); if(!p) return pageHome();
+  track('product',p.id,p.name);
+  const ls = [...p.listings].sort((a,b)=>dist(sid(a[0]))-dist(sid(b[0])));
+  const best = p.listings.reduce((a,b)=>b[1]<a[1]?b:a);
+  const bs = sid(best[0]);
+  $('#app').innerHTML = `
+  ${navHTML('Products')}
+  <main class="pt-16 max-w-7xl mx-auto px-4 lg:px-8 py-8">
+    <nav class="reveal text-xs text-mut flex items-center gap-1.5 mb-6 flex-wrap">
+      <a href="#/search" class="hover:text-brand-700">Products</a><i data-lucide="chevron-right" class="w-3 h-3"></i>
+      <a href="#/search?q=${encodeURIComponent(p.cat)}" class="hover:text-brand-700">${p.cat}</a><i data-lucide="chevron-right" class="w-3 h-3"></i>
+      <span class="text-ink font-medium">${p.name}</span>
+    </nav>
+    <div class="grid lg:grid-cols-[440px,1fr] gap-8 items-start">
+      <div class="reveal bg-white rounded-3xl shadow-soft overflow-hidden">
+        <img src="${pic(p.seed,880,880)}" class="w-full aspect-square object-cover" alt="${p.name}"/>
+      </div>
+      <div class="reveal">
+        <div class="flex items-center gap-2.5">
+          <span class="text-[11px] font-semibold text-brand-700 bg-brand-50 px-2.5 py-1 rounded-full">${p.cat}</span>
+          ${best[2]?`<span class="text-[11px] font-bold text-white bg-amber2 px-2.5 py-1 rounded-full">-${discount(best)}% today</span>`:''}
+        </div>
+        <h1 class="font-display text-2xl md:text-4xl font-bold mt-3 leading-tight">${p.name}</h1>
+        <p class="text-mut mt-3 leading-relaxed">${p.desc}</p>
+        <div class="flex items-end gap-3 mt-5">
+          <span class="font-display text-4xl font-bold text-brand-700">${EGP(best[1])}</span>
+          ${best[2]?`<span class="text-lg text-mut line-through mb-1">${EGP(best[2])}</span><span class="mb-1.5 text-xs font-bold text-amber2">save ${EGP(best[2]-best[1])}</span>`:''}
+        </div>
+        <p class="text-sm text-mut mt-1">Best price at <a href="#/store/${bs.id}" class="font-semibold text-brand-700 hover:underline">${bs.name}</a> · ${dstr(dist(bs))} away</p>
+        <p class="text-sm font-semibold mt-3 flex items-center gap-1.5 ${best[3]>0?'text-brand-700':'text-red-500'}"><span class="h-2 w-2 rounded-full ${best[3]>0?'bg-brand-500':'bg-red-500'}"></span>${best[3]>0?`Available now — ${best[3]} units at this store`:'Out of stock at best-price store'}</p>
+        <div class="flex flex-wrap gap-2.5 mt-6">
+          <a href="#/compare/${p.id}" class="bg-ink text-white text-sm font-semibold px-5 py-3 rounded-xl hover:bg-brand-700 transition flex items-center gap-2"><i data-lucide="git-compare-arrows" class="w-4 h-4"></i>Compare Prices</a>
+          <a href="${gmap(bs)}" target="_blank" class="bg-brand-600 text-white text-sm font-semibold px-5 py-3 rounded-xl hover:bg-brand-700 transition flex items-center gap-2"><i data-lucide="navigation" class="w-4 h-4"></i>Get Directions</a>
+          <button onclick="favP('${p.id}')" class="border border-stone-200 hover:border-ink text-sm font-semibold px-5 py-3 rounded-xl transition flex items-center gap-2">${favIcon(S.favProducts.has(p.id),'w-4 h-4')}${S.favProducts.has(p.id)?'Saved':'Save'}</button>
+        </div>
+        <div class="bg-white rounded-2xl shadow-soft p-5 mt-7">
+          <h3 class="font-display font-semibold mb-3.5">Specifications</h3>
+          <dl class="grid sm:grid-cols-2 gap-x-6 text-sm">
+            ${p.specs.map(([k,v])=>`<div class="flex justify-between py-2.5 border-b border-stone-100"><dt class="text-mut">${k}</dt><dd class="font-medium text-right">${v}</dd></div>`).join('')}
+          </dl>
+        </div>
+      </div>
+    </div>
+    <section class="mt-14">
+      <h2 class="reveal font-display text-xl md:text-2xl font-bold mb-1">Stores Selling This Product</h2>
+      <p class="reveal text-sm text-mut mb-6">Sorted by distance. Prices update live as stores edit their catalogs.</p>
+      <div class="bg-white rounded-3xl shadow-soft overflow-hidden">
+        ${ls.map((l,i)=>{ const s=sid(l[0]), d=discount(l); return `
+        <div class="reveal flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-5 px-5 sm:px-7 py-5 ${i?'border-t border-stone-100':''} hover:bg-cream/60 transition">
+          <span class="font-display font-bold text-mut w-6">${i+1}</span>
+          <img src="${pic(s.img,120,120)}" class="h-12 w-12 rounded-xl object-cover" loading="lazy"/>
+          <div class="flex-1 min-w-0"><a href="#/store/${s.id}" class="font-semibold hover:text-brand-700 transition">${s.name}</a>
+            <p class="text-xs text-mut mt-0.5 flex items-center gap-2"><i data-lucide="map-pin" class="w-3 h-3"></i>${dstr(dist(s))} · ${s.area} · ${s.rating} ★</p></div>
+          <div class="flex items-center gap-3">
+            <div class="text-right"><p class="font-display font-bold text-lg ${l[1]===best[1]?'text-brand-700':''}">${EGP(l[1])}</p>
+            ${l[2]?`<p class="text-[11px] text-mut line-through">${EGP(l[2])} <span class="text-amber2 font-bold no-underline">-${d}%</span></p>`:''}</div>
+            <span class="text-[11px] font-semibold px-2 py-1 rounded-lg ${l[3]>0?'bg-brand-50 text-brand-700':'bg-red-50 text-red-500'}">${l[3]>0?'In stock':'Sold out'}</span>
+            <a href="${gmap(s)}" target="_blank" class="text-xs font-semibold border border-stone-200 hover:border-ink px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5"><i data-lucide="navigation" class="w-3.5 h-3.5"></i><span class="hidden sm:inline">Directions</span></a>
+          </div>
+        </div>`;}).join('')}
+      </div>
+    </section>
+  </main>
+  ${footerHTML()}`;
+}
+
+/* ============================== PAGE: OFFERS ============================== */
+function allOffers(){
+  return PRODUCTS.flatMap(p=>p.listings.filter(l=>l[2]).map(l=>({p,l})))
+    .sort((a,b)=>discount(b.l)-discount(a.l));
+}
+function pageOffers(qs){
+  const q = new URLSearchParams(qs||'');
+  const st = { cat:q.get('cat')||'All', maxD:10, minD:0, maxP:50000 };
+  const draw = () => {
+    let list = allOffers().map((o,i)=>({...o,i})).filter(o=>{
+      const s = sid(o.l[0]);
+      return (st.cat==='All'||s.cat===st.cat||o.p.cat===st.cat) && dist(s)<=st.maxD && discount(o.l)>=st.minD && o.l[1]<=st.maxP;
+    });
+    $('#offGrid').innerHTML = list.length?list.map(o=>offerCard(o,o.i)).join('')
+      :`<div class="col-span-full bg-white rounded-3xl p-14 text-center shadow-soft"><i data-lucide="badge-percent" class="w-11 h-11 mx-auto text-stone-300"></i><p class="font-semibold mt-3">No offers match your filters</p><p class="text-sm text-mut mt-1">Try raising the distance limit or lowering the discount filter.</p></div>`;
+    $('#offCount').textContent = list.length+' active offers';
+    lucide.createIcons(); observeReveal();
+  };
+  $('#app').innerHTML = `
+  ${navHTML('Offers')}
+  <main class="pt-16 max-w-7xl mx-auto px-4 lg:px-8 py-8">
+    <div class="reveal text-center max-w-xl mx-auto mb-9">
+      <p class="text-xs font-bold tracking-[.2em] uppercase text-amber2 mb-2">Limited time</p>
+      <h1 class="font-display text-3xl md:text-4xl font-bold">Local Offers</h1>
+      <p class="text-mut mt-2.5">Handpicked discounts from stores walking distance from you — updated by store owners daily.</p>
+    </div>
+    <div class="reveal bg-white rounded-2xl shadow-soft p-4 mb-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div><label class="text-xs font-semibold text-mut block mb-1.5">Category</label>
+        <select onchange="offCat(this.value)" class="w-full text-sm border border-stone-200 rounded-xl px-3 py-2.5 outline-none bg-cream cursor-pointer">
+          ${['All',...S.categories].map(c=>`<option ${st.cat===c?'selected':''}>${c}</option>`).join('')}
+        </select></div>
+      <div><label class="text-xs font-semibold text-mut block mb-1.5">Distance ≤ <b id="ofD" class="text-brand-700">${st.maxD} km</b></label>
+        <input type="range" min="1" max="10" value="${st.maxD}" oninput="offDist(this.value)" class="w-full mt-3"/></div>
+      <div><label class="text-xs font-semibold text-mut block mb-1.5">Min discount: <b id="ofDi" class="text-brand-700">${st.minD}%</b></label>
+        <input type="range" min="0" max="40" value="${st.minD}" oninput="offDisc(this.value)" class="w-full mt-3"/></div>
+      <div><label class="text-xs font-semibold text-mut block mb-1.5">Max price: <b id="ofP" class="text-brand-700">${fmt(st.maxP)} EGP</b></label>
+        <input type="range" min="50" max="50000" step="50" value="${st.maxP}" oninput="offPrice(this.value)" class="w-full mt-3"/></div>
+    </div>
+    <p class="reveal text-sm font-semibold text-mut mb-5" id="offCount"></p>
+    <div id="offGrid" class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5"></div>
+  </main>
+  ${footerHTML()}`;
+  window._off = st; draw();
+}
+function offRedraw(){ const st=window._off;
+  let list = allOffers().map((o,i)=>({...o,i})).filter(o=>{const s=sid(o.l[0]);
+    return (st.cat==='All'||s.cat===st.cat||o.p.cat===st.cat)&&dist(s)<=st.maxD&&discount(o.l)>=st.minD&&o.l[1]<=st.maxP;});
+  $('#offGrid').innerHTML = list.length?list.map(o=>offerCard(o,o.i)).join('')
+    :`<div class="col-span-full bg-white rounded-3xl p-14 text-center shadow-soft"><i data-lucide="badge-percent" class="w-11 h-11 mx-auto text-stone-300"></i><p class="font-semibold mt-3">No offers match your filters</p></div>`;
+  $('#offCount').textContent = list.length+' active offers';
+  lucide.createIcons(); observeReveal();
+}
+function offCat(v){ window._off.cat=v; offRedraw(); }
+function offDist(v){ window._off.maxD=+v; $('#ofD').textContent=v+' km'; offRedraw(); }
+function offDisc(v){ window._off.minD=+v; $('#ofDi').textContent=v+'%'; offRedraw(); }
+function offPrice(v){ window._off.maxP=+v; $('#ofP').textContent=fmt(+v)+' EGP'; offRedraw(); }
+
+/* ============================== PAGE: USER ACCOUNT ============================== */
+function pageAccount(){
+  const tabs = [['profile','user','Profile'],['favstores','store','Favorite Stores'],['favproducts','heart','Favorite Products'],['offers','bookmark','Saved Offers'],['recent','history','Recently Viewed'],['history','search','Search History'],['location','map-pin','Location']];
+  const t = window._acct||'profile'; window._acct = t;
+  let panel = '';
+  if(t==='profile') panel = `
+    <div class="flex items-center gap-4 mb-6">
+      <span class="h-16 w-16 rounded-2xl bg-brand-600 text-white font-display font-bold text-xl flex items-center justify-center">${S.user?S.user.name.split(' ').map(w=>w[0]).slice(0,2).join(''):'AH'}</span>
+      <div><h2 class="font-display font-bold text-xl">${S.user?S.user.name:'Ahmed Hassan (demo)'}</h2><p class="text-sm text-mut">${S.user?S.user.email:'ahmed.hassan@demo.shoper.eg'} · Customer since 2025</p></div>
+    </div>
+    <dl class="grid sm:grid-cols-2 gap-x-6 text-sm">
+      ${[['Full name',S.user?S.user.name:'Ahmed Hassan'],['Email',S.user?S.user.email:'ahmed.hassan@demo.shoper.eg'],['Phone','+20 100 233 8845'],['Role',S.user?(S.user.role==='owner'?'Store Owner':'Customer'):'Customer']].map(([k,v])=>`
+      <div class="flex justify-between py-3 border-b border-stone-100"><dt class="text-mut">${k}</dt><dd class="font-medium">${v}</dd></div>`).join('')}
+    </dl>
+    <div class="grid grid-cols-3 gap-3 mt-6">
+      ${[[S.favStores.size,'Saved stores'],[S.favProducts.size,'Saved products'],[S.savedOffers.size,'Saved offers']].map(([n,l])=>`
+      <div class="bg-cream rounded-2xl p-4 text-center"><p class="font-display text-2xl font-bold text-brand-700">${n}</p><p class="text-xs text-mut mt-0.5">${l}</p></div>`).join('')}
+    </div>`;
+  if(t==='favstores') panel = gridOrEmpty([...S.favStores].map(i=>STORES[i]).filter(Boolean).map(storeCard),'No saved stores yet. Tap the heart on any store to keep it here.');
+  if(t==='favproducts') panel = gridOrEmpty(PRODUCTS.filter(p=>S.favProducts.has(p.id)).map(productCard),'No saved products yet — search something you love.');
+  if(t==='offers'){ const list = allOffers().filter(o=>S.savedOffers.has(o.p.id+'-'+o.l[0]));
+    panel = gridOrEmpty(list.map(o=>offerCard(o,o.p.id.length)),'No saved offers. Bookmark deals to compare them later.','lg:grid-cols-2'); }
+  if(t==='recent') panel = listOrEmpty(S.recent, r=>`
+    <a href="#/${r.type==='store'?'store/'+r.id:'product/'+r.id}" class="flex items-center gap-3.5 p-3.5 rounded-xl hover:bg-cream transition">
+      <span class="h-9 w-9 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0"><i data-lucide="${r.type==='store'?'store':'package'}" class="w-4 h-4"></i></span>
+      <div class="flex-1 min-w-0"><p class="text-sm font-medium truncate">${r.name}</p><p class="text-xs text-mut">${r.type==='store'?'Store':'Product'} · viewed ${r.at}</p></div>
+      <i data-lucide="chevron-right" class="w-4 h-4 text-stone-300"></i></a>`,'Nothing viewed yet. Your history will appear here.');
+  if(t==='history') panel = listOrEmpty(S.history, hq=>`
+    <a href="#/search?q=${encodeURIComponent(hq)}" class="flex items-center gap-3.5 p-3.5 rounded-xl hover:bg-cream transition">
+      <span class="h-9 w-9 rounded-lg bg-stone-100 text-mut flex items-center justify-center shrink-0"><i data-lucide="search" class="w-4 h-4"></i></span>
+      <span class="flex-1 text-sm font-medium">${hq}</span><i data-lucide="arrow-up-right" class="w-4 h-4 text-stone-300"></i></a>`,
+    'No searches yet. Everything you look for shows up here for quick repeat searches.',
+    `<button onclick="S.history=[];persist();route();toast('Search history cleared')" class="text-xs font-semibold text-red-500 hover:underline">Clear all</button>`);
+  if(t==='location') panel = `
+    <div class="bg-white rounded-2xl border border-stone-100 p-6">
+      <div class="flex items-center gap-3.5"><span class="h-11 w-11 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center"><i data-lucide="map-pin" class="w-5 h-5"></i></span>
+      <div><p class="font-semibold">Current location</p><p class="text-sm text-mut">${S.loc.label}</p></div></div>
+      <div class="grid sm:grid-cols-3 gap-2.5 mt-5">
+        ${[['Tahrir Square, Downtown Cairo',30.0444,31.2357],['Zamalek, Cairo',30.0600,31.2200],['Nasr City, Cairo',30.0520,31.3180]].map(([l,a,b])=>`
+        <button onclick="S.loc={lat:${a},lng:${b},label:'${l}'};persist();toast('Location set: ${l}','map-pin');route()" class="text-xs font-semibold border ${S.loc.label===l?'border-brand-500 bg-brand-50 text-brand-700':'border-stone-200 hover:border-ink'} rounded-xl px-3 py-3 transition">${l}</button>`).join('')}
+      </div>
+      <button onclick="toast('Device GPS access is simulated in this demo.','info')" class="mt-4 text-sm font-semibold bg-brand-600 text-white px-5 py-3 rounded-xl hover:bg-brand-700 transition flex items-center gap-2"><i data-lucide="locate-fixed" class="w-4 h-4"></i>Use My Location</button>
+    </div>`;
+  function gridOrEmpty(arr,empty,cols='lg:grid-cols-3'){ return arr.length?`<div class="grid sm:grid-cols-2 ${cols} gap-5">${arr.join('')}</div>`:emptyBox(empty); }
+  function listOrEmpty(arr,fn,empty,extra=''){ return `${extra}<div class="divide-y divide-stone-100 mt-2">${arr.length?arr.map(fn).join(''):emptyBox(empty)}</div>`; }
+  function emptyBox(msg){ return `<div class="bg-white rounded-2xl p-12 text-center shadow-soft"><i data-lucide="inbox" class="w-10 h-10 mx-auto text-stone-300"></i><p class="text-sm text-mut mt-3 max-w-xs mx-auto">${msg}</p></div>`; }
+  $('#app').innerHTML = `
+  ${navHTML('')}
+  <main class="pt-16 max-w-7xl mx-auto px-4 lg:px-8 py-8 grid lg:grid-cols-[260px,1fr] gap-8 items-start">
+    <aside class="reveal bg-white rounded-2xl shadow-soft p-3 lg:sticky lg:top-24">
+      <p class="text-[11px] font-bold tracking-[.15em] uppercase text-mut px-3 pt-2 pb-2.5">My Account</p>
+      ${tabs.map(([k,ic,l])=>`<button onclick="window._acct='${k}';route()" class="tabbtn ${t===k?'active':''} w-full flex items-center gap-2.5 text-sm font-medium px-3.5 py-2.5 rounded-xl hover:bg-stone-100 transition text-left"><i data-lucide="${ic}" class="w-4 h-4"></i>${l}</button>`).join('')}
+      <div class="border-t border-stone-100 mt-2 pt-2">
+        ${S.user?`<button onclick="logout()" class="w-full flex items-center gap-2.5 text-sm font-medium text-red-500 px-3.5 py-2.5 rounded-xl hover:bg-red-50 transition"><i data-lucide="log-out" class="w-4 h-4"></i>Sign out</button>`
+        :`<a href="#/login" class="flex items-center gap-2.5 text-sm font-semibold text-brand-700 px-3.5 py-2.5 rounded-xl hover:bg-brand-50 transition"><i data-lucide="log-in" class="w-4 h-4"></i>Sign in</a>`}
+      </div>
+    </aside>
+    <section class="reveal min-h-[400px]">${panel}</section>
+  </main>
+  ${footerHTML()}`;
+}
+function logout(){ S.user=null; persist(); toast('Signed out. See you soon!','log-out'); location.hash='#/'; }
+
+/* ============================== PAGE: MERCHANT DASHBOARD ============================== */
+const MS = 1; // demo merchant owns store id 1 (Cairo Mobile Hub)
+function pageMerchant(tab){
+  tab = tab||'overview'; window._mtab = tab;
+  const s = sid(MS), prods = storeProducts(MS), offs = storeOffers(MS);
+  let panel = '';
+  if(tab==='overview'){
+    panel = `
+    <div class="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+      ${[['eye','24.8K','Total Views','+12.4% this week'],['package-search','61.3K','Product Views','+8.1% this week'],['footprints','3,214','Store Visits','+4.9% this week'],['heart','1,092','Favorites','+18 new']].map(([ic,n,l,d])=>`
+      <div class="bg-white rounded-2xl shadow-soft p-5 hover:shadow-lift transition">
+        <div class="flex items-center justify-between"><span class="h-10 w-10 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center"><i data-lucide="${ic}" class="w-5 h-5"></i></span>
+        <span class="text-[11px] font-bold text-brand-700 bg-brand-50 px-2 py-1 rounded-lg">${d}</span></div>
+        <p class="font-display text-2xl font-bold mt-3.5">${n}</p><p class="text-xs text-mut mt-0.5">${l}</p>
+      </div>`).join('')}
+    </div>
+    <div class="grid lg:grid-cols-[1.6fr,1fr] gap-4">
+      <div class="bg-white rounded-2xl shadow-soft p-5">
+        <div class="flex items-center justify-between mb-4"><h3 class="font-display font-semibold">Traffic — last 7 days</h3>
+        <span class="text-[11px] font-semibold text-mut bg-cream px-2.5 py-1 rounded-lg">${offs.length} active offers boosting views</span></div>
+        <div class="h-60"><canvas id="chLine"></canvas></div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-soft p-5">
+        <h3 class="font-display font-semibold mb-4">Views by category</h3>
+        <div class="h-60"><canvas id="chDough"></canvas></div>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-soft p-5 mt-4">
+      <h3 class="font-display font-semibold mb-3">Live status</h3>
+      <div class="grid sm:grid-cols-3 gap-4 text-sm">
+        <div class="flex items-center gap-3"><span class="h-2.5 w-2.5 rounded-full bg-brand-500"></span>Store is <b>&nbsp;open</b> — ${s.hours}</div>
+        <div class="flex items-center gap-3"><span class="h-2.5 w-2.5 rounded-full bg-amber2"></span>${offs.length} offers ending within 30 days</div>
+        <div class="flex items-center gap-3"><span class="h-2.5 w-2.5 rounded-full bg-stone-300"></span>${prods.filter(p=>p.listings.find(l=>l[0]===MS&&l[3]===0)).length} products out of stock</div>
+      </div>
+    </div>`;
+  }
+  if(tab==='store'){
+    panel = `
+    <h3 class="font-display font-bold text-lg mb-5">Store Information</h3>
+    <form onsubmit="event.preventDefault();toast('Store information saved','save');persist()" class="grid sm:grid-cols-2 gap-4 max-w-3xl">
+      ${[['Store name',s.name],['Phone',s.phone],['WhatsApp','+20 111 908 3346'],['Website','cairo-mobile-hub.eg'],['Address',s.address],['Area',s.area]].map(([l,v])=>`
+      <label class="text-xs font-semibold text-mut">${l}<input value="${v}" class="mt-1.5 w-full text-sm font-normal text-ink border border-stone-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-brand-500 bg-cream"/></label>`).join('')}
+      <label class="text-xs font-semibold text-mut">Category
+        <select class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-brand-500 bg-cream">${S.categories.map(c=>`<option ${c===s.cat?'selected':''}>${c}</option>`).join('')}</select></label>
+      <label class="text-xs font-semibold text-mut">Opening hours<input value="${s.hours}" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-brand-500 bg-cream"/></label>
+      <label class="text-xs font-semibold text-mut">Store description<textarea rows="3" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-brand-500 bg-cream sm:col-span-2">${s.desc}</textarea></label>
+      <div class="sm:col-span-2 flex flex-wrap items-center gap-3">
+        <button class="bg-brand-600 text-white text-sm font-semibold px-6 py-3 rounded-xl hover:bg-brand-700 transition">Save changes</button>
+        <span class="text-xs text-mut flex items-center gap-1.5"><i data-lucide="map-pin" class="w-3.5 h-3.5 text-brand-600"></i>Pinned location: ${s.lat.toFixed(4)}, ${s.lng.toFixed(4)} <button type="button" onclick="toast('Drag the pin on the live map to adjust your store location','info')" class="text-brand-700 font-semibold hover:underline">adjust</button></span>
+      </div>
+    </form>`;
+  }
+  if(tab==='products') return renderMProducts();
+  if(tab==='offers') return renderMOffers();
+  $('#app').innerHTML = `
+  ${navHTML('')}
+  <main class="pt-16 max-w-7xl mx-auto px-4 lg:px-8 py-8">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+      <div class="flex items-center gap-3.5">
+        <img src="${pic(s.img,120,120)}" class="h-12 w-12 rounded-xl object-cover shadow-soft"/>
+        <div><h1 class="font-display font-bold text-xl">Store Owner Dashboard</h1><p class="text-xs text-mut">${s.name} · ${s.cat}</p></div>
+      </div>
+      <span class="text-xs font-semibold bg-amber-50 text-amber2 px-3 py-1.5 rounded-full flex items-center gap-1.5"><i data-lucide="crown" class="w-3.5 h-3.5"></i>Pro merchant</span>
+    </div>
+    <div class="grid lg:grid-cols-[230px,1fr] gap-6 items-start">
+      <aside class="bg-white rounded-2xl shadow-soft p-3">
+        ${[['overview','layout-dashboard','Overview'],['store','store','Store Management'],['products','package','Products'],['offers','badge-percent','Offers']].map(([k,ic,l])=>`
+        <button onclick="location.hash='#/merchant/${k}'" class="tabbtn ${tab===k?'active':''} w-full flex items-center gap-2.5 text-sm font-medium px-3.5 py-2.5 rounded-xl hover:bg-stone-100 transition text-left"><i data-lucide="${ic}" class="w-4 h-4"></i>${l}</button>`).join('')}
+      </aside>
+      <section class="min-h-[420px]">${panel}</section>
+    </div>
+  </main>
+  ${footerHTML()}`;
+  if(tab==='overview'){
+    Chart.defaults.font.family='Inter';
+    charts.push(new Chart($('#chLine'),{type:'line',data:{labels:['Sat','Sun','Mon','Tue','Wed','Thu','Fri'],datasets:[
+      {label:'Store views',data:[820,940,1100,990,1420,1680,1510],borderColor:'#0E7C5B',backgroundColor:'rgba(14,124,91,.08)',fill:true,tension:.45,borderWidth:2.5,pointRadius:3,pointBackgroundColor:'#0E7C5B'},
+      {label:'Product views',data:[1640,1810,2260,2040,2890,3320,3010],borderColor:'#E8930C',backgroundColor:'rgba(232,147,12,.07)',fill:true,tension:.45,borderWidth:2.5,pointRadius:3,pointBackgroundColor:'#E8930C'}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{usePointStyle:true,boxWidth:8,padding:18}}},scales:{y:{grid:{color:'#EFEDE6'},border:{display:false}},x:{grid:{display:false},border:{display:false}}}}}));
+    charts.push(new Chart($('#chDough'),{type:'doughnut',data:{labels:['Chargers','Audio','Cases','Cables','Other'],datasets:[{data:[38,24,18,12,8],backgroundColor:['#0E7C5B','#47A97F','#E8930C','#7FC9A6','#D7EFE4'],borderWidth:0,hoverOffset:8}]},
+      options:{responsive:true,maintainAspectRatio:false,cutout:'68%',plugins:{legend:{position:'bottom',labels:{usePointStyle:true,boxWidth:8,padding:14}}}}}));
+  }
+}
+function renderMProducts(){
+  const s = sid(MS), prods = storeProducts(MS);
+  const qc = window._mpq||''; window._mpq = qc;
+  const list = prods.filter(p=>p.name.toLowerCase().includes(qc.toLowerCase()));
+  $('#app').innerHTML = `
+  ${navHTML('')}
+  <main class="pt-16 max-w-7xl mx-auto px-4 lg:px-8 py-8">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+      <h1 class="font-display font-bold text-xl">Product Management</h1>
+      <div class="flex gap-2.5">
+        <div class="relative"><i data-lucide="search" class="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
+        <input id="mpq" value="${esc(qc)}" oninput="window._mpq=this.value;mTable()" placeholder="Search products…" class="text-sm border border-stone-200 rounded-xl pl-9 pr-4 py-2.5 outline-none focus:border-brand-500 bg-white w-52"/></div>
+        <button onclick="mForm()" class="bg-brand-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-brand-700 transition flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i>Add Product</button>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-soft overflow-hidden">
+      <div class="overflow-x-auto"><table class="w-full text-sm min-w-[720px]">
+        <thead><tr class="text-left text-xs uppercase tracking-wider text-mut border-b border-stone-100 bg-cream/60">
+          <th class="px-5 py-3.5 font-semibold">Product</th><th class="px-4 py-3.5 font-semibold">Category</th><th class="px-4 py-3.5 font-semibold">Price</th><th class="px-4 py-3.5 font-semibold">Discount</th><th class="px-4 py-3.5 font-semibold">Availability</th><th class="px-4 py-3.5 font-semibold text-right">Actions</th></tr></thead>
+        <tbody id="mptb"></tbody>
+      </table></div>
+    </div>
+  </main>
+  ${footerHTML()}`;
+  window._mpFull = list;
+  mTable();
+}
+function mTable(){
+  const list = (window._mpFull||[]).filter(p=>p.name.toLowerCase().includes((window._mpq||'').toLowerCase()));
+  $('#mptb').innerHTML = list.map(p=>{
+    const l = p.listings.find(x=>x[0]===MS); const d = l[2]?discount(l):0;
+    return `<tr class="border-b border-stone-50 hover:bg-cream/50 transition">
+      <td class="px-5 py-3.5"><div class="flex items-center gap-3"><img src="${pic(p.seed,80,80)}" class="h-10 w-10 rounded-lg object-cover"/>
+      <div><p class="font-semibold">${p.name}</p><p class="text-xs text-mut">${p.listings.length} store listing${p.listings.length>1?'s':''}</p></div></div></td>
+      <td class="px-4 py-3.5 text-mut">${p.cat}</td>
+      <td class="px-4 py-3.5"><span class="font-bold">${EGP(l[1])}</span>${l[2]?`<span class="block text-[11px] text-mut line-through">${EGP(l[2])}</span>`:''}</td>
+      <td class="px-4 py-3.5">${d?`<span class="text-xs font-bold text-amber2 bg-amber-50 px-2 py-1 rounded-lg">-${d}%</span>`:'<span class="text-mut text-xs">—</span>'}</td>
+      <td class="px-4 py-3.5"><span class="text-xs font-semibold flex items-center gap-1.5 ${l[3]>0?'text-brand-700':'text-red-500'}"><span class="h-1.5 w-1.5 rounded-full ${l[3]>0?'bg-brand-500':'bg-red-500'}"></span>${l[3]>0?l[3]+' in stock':'Out of stock'}</span></td>
+      <td class="px-4 py-3.5 text-right whitespace-nowrap">
+        <button onclick="mForm('${p.id}')" class="p-2 rounded-lg hover:bg-stone-100 text-mut hover:text-ink transition"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+        <button onclick="mDel('${p.id}')" class="p-2 rounded-lg hover:bg-red-50 text-mut hover:text-red-500 transition"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+      </td></tr>`;}).join('');
+  lucide.createIcons();
+}
+function mForm(pid){
+  const p = pid?PRODUCTS.find(x=>x.id===pid):null;
+  const l = p?p.listings.find(x=>x[0]===MS):null;
+  openModal(`
+    <h3 class="font-display font-bold text-lg mb-5">${p?'Edit Product':'Add New Product'}</h3>
+    <form id="mpform" class="grid sm:grid-cols-2 gap-4">
+      <label class="text-xs font-semibold text-mut sm:col-span-2">Product name<input name="name" required value="${p?esc(p.name):''}" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-brand-500 bg-cream"/></label>
+      <label class="text-xs font-semibold text-mut">Category<select name="cat" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 bg-cream">${S.categories.map(c=>`<option ${p&&p.cat===c?'selected':''}>${c}</option>`).join('')}</select></label>
+      <label class="text-xs font-semibold text-mut">Image URL<input name="img" value="${p?pic(p.seed,400,400):''}" placeholder="Leave as-is for a demo image" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-brand-500 bg-cream"/></label>
+      <label class="text-xs font-semibold text-mut">Price (EGP)<input name="price" type="number" min="1" required value="${l?l[1]:''}" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-brand-500 bg-cream"/></label>
+      <label class="text-xs font-semibold text-mut">Old price (EGP, optional)<input name="old" type="number" min="0" value="${l&&l[2]?l[2]:''}" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-brand-500 bg-cream"/></label>
+      <label class="text-xs font-semibold text-mut">Stock quantity<input name="stock" type="number" min="0" required value="${l?l[3]:''}" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-brand-500 bg-cream"/></label>
+      <label class="text-xs font-semibold text-mut">Availability<select name="avail" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 bg-cream"><option value="1" ${!p||l[3]>0?'selected':''}>In stock</option><option value="0" ${p&&l[3]===0?'selected':''}>Out of stock</option></select></label>
+      <label class="text-xs font-semibold text-mut sm:col-span-2">Description<textarea name="desc" rows="2" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-brand-500 bg-cream">${p?esc(p.desc):''}</textarea></label>
+      <div class="sm:col-span-2 flex justify-end gap-2.5 pt-1">
+        <button type="button" onclick="closeModal()" class="text-sm font-semibold px-5 py-2.5 rounded-xl border border-stone-200 hover:border-ink transition">Cancel</button>
+        <button class="bg-brand-600 text-white text-sm font-semibold px-6 py-2.5 rounded-xl hover:bg-brand-700 transition">${p?'Save changes':'Add product'}</button>
+      </div>
+    </form>`);
+  $('#mpform').onsubmit = e => {
+    e.preventDefault();
+    const f = new FormData(e.target), g = k => f.get(k);
+    if(p){ p.name=g('name'); p.cat=g('cat'); p.desc=g('desc'); l[1]=+g('price'); l[2]=+g('old')||null; l[3]=g('avail')==='0'?0:+g('stock'); toast('Product updated','save'); }
+    else{
+      PRODUCTS.push({id:'u'+Date.now(),name:g('name'),cat:g('cat'),desc:g('desc')||'Locally added product.',seed:'user'+Date.now(),specs:[['Source','Added by store owner']],listings:[[MS,+g('price'),+g('old')||null,g('avail')==='0'?0:+g('stock')]]});
+      toast('Product added to your catalog','package-plus');
+    }
+    persist(); closeModal(); route();
+  };
+}
+function mDel(pid){
+  const p = PRODUCTS.find(x=>x.id===pid);
+  openModal(`<div class="text-center"><span class="h-12 w-12 rounded-2xl bg-red-50 text-red-500 flex items-center justify-center mx-auto"><i data-lucide="trash-2" class="w-5 h-5"></i></span>
+    <h3 class="font-display font-bold text-lg mt-4">Delete “${esc(p.name)}”?</h3>
+    <p class="text-sm text-mut mt-1.5">This removes the product and its price from SHOPER search immediately.</p>
+    <div class="flex justify-center gap-2.5 mt-6"><button onclick="closeModal()" class="text-sm font-semibold px-5 py-2.5 rounded-xl border border-stone-200 hover:border-ink">Keep it</button>
+    <button onclick="PRODUCTS.splice(PRODUCTS.indexOf(PRODUCTS.find(x=>x.id==='${pid}')),1);persist();closeModal();route();toast('Product deleted','trash-2')" class="bg-red-500 text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-red-600">Delete</button></div></div>`);
+}
+function renderMOffers(){
+  const offs = storeOffers(MS);
+  $('#app').innerHTML = `
+  ${navHTML('')}
+  <main class="pt-16 max-w-7xl mx-auto px-4 lg:px-8 py-8">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+      <h1 class="font-display font-bold text-xl">Offers Management</h1>
+      <button onclick="moForm()" class="bg-brand-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-brand-700 transition flex items-center gap-2"><i data-lucide="badge-plus" class="w-4 h-4"></i>Create Offer</button>
+    </div>
+    <div class="grid sm:grid-cols-2 gap-4">
+      ${offs.length?offs.map((o,i)=>{ const d=discount(o.l); return `
+      <article class="bg-white rounded-2xl shadow-soft p-5 flex gap-4 items-center hover:shadow-lift transition">
+        <img src="${pic(o.p.seed,140,140)}" class="h-16 w-16 rounded-xl object-cover shrink-0"/>
+        <div class="flex-1 min-w-0">
+          <p class="font-semibold text-sm truncate">${o.p.name}</p>
+          <p class="text-xs text-mut mt-0.5">${EGP(o.l[2])} → <b class="text-brand-700">${EGP(o.l[1])}</b></p>
+          <div class="flex items-center gap-2 mt-1.5">
+            <span class="text-[11px] font-bold text-white bg-amber2 px-2 py-0.5 rounded">-${d}%</span>
+            <span class="text-[11px] text-mut flex items-center gap-1"><i data-lucide="timer" class="w-3 h-3"></i>ends ${expDays(i+2)}</span>
+          </div>
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <button onclick="moForm('${o.p.id}')" class="p-2 rounded-lg hover:bg-stone-100 text-mut hover:text-ink transition"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+          <button onclick="moDel('${o.p.id}')" class="p-2 rounded-lg hover:bg-red-50 text-mut hover:text-red-500 transition"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+        </div>
+      </article>`;}).join('')
+      :`<div class="sm:col-span-2 bg-white rounded-2xl p-12 text-center shadow-soft"><i data-lucide="badge-percent" class="w-10 h-10 mx-auto text-stone-300"></i><p class="text-sm font-semibold mt-3">No offers yet</p><p class="text-xs text-mut mt-1">Create your first discount — offers drive ~3× more product views.</p></div>`}
+    </div>
+  </main>
+  ${footerHTML()}`;
+}
+function moForm(pid){
+  const p = pid?PRODUCTS.find(x=>x.id===pid):null;
+  const l = p?p.listings.find(x=>x[0]===MS):null;
+  const mine = storeProducts(MS);
+  openModal(`
+    <h3 class="font-display font-bold text-lg mb-5">${p?'Edit Offer':'Create New Offer'}</h3>
+    <form id="moform" class="grid sm:grid-cols-2 gap-4">
+      <label class="text-xs font-semibold text-mut sm:col-span-2">Product<select name="pid" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 bg-cream">
+        ${mine.map(x=>`<option value="${x.id}" ${p&&p.id===x.id?'selected':''}>${x.name}</option>`).join('')}</select></label>
+      <label class="text-xs font-semibold text-mut">Offer price (EGP)<input name="price" type="number" min="1" required value="${l?l[1]:''}" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 bg-cream"/></label>
+      <label class="text-xs font-semibold text-mut">Original price (EGP)<input name="old" type="number" min="1" required value="${l&&l[2]?l[2]:''}" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 bg-cream"/></label>
+      <label class="text-xs font-semibold text-mut sm:col-span-2">Expires on<input name="exp" type="date" required value="${new Date(Date.now()+14*864e5).toISOString().slice(0,10)}" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 bg-cream"/></label>
+      <div class="sm:col-span-2 flex justify-end gap-2.5 pt-1">
+        <button type="button" onclick="closeModal()" class="text-sm font-semibold px-5 py-2.5 rounded-xl border border-stone-200 hover:border-ink">Cancel</button>
+        <button class="bg-brand-600 text-white text-sm font-semibold px-6 py-2.5 rounded-xl hover:bg-brand-700">${p?'Save offer':'Publish offer'}</button>
+      </div>
+    </form>`);
+  $('#moform').onsubmit = e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const t = PRODUCTS.find(x=>x.id===f.get('pid')), tl = t.listings.find(x=>x[0]===MS);
+    tl[1]=+f.get('price'); tl[2]=+f.get('old');
+    persist(); closeModal(); toast(p?'Offer updated':'Offer is now live on SHOPER','badge-check'); route();
+  };
+}
+function moDel(pid){
+  const t = PRODUCTS.find(x=>x.id===pid), tl = t.listings.find(x=>x[0]===MS);
+  tl[2]=null; persist(); route(); toast('Offer removed — price restored','rotate-ccw');
+}
+function openModal(html){
+  const ov = document.createElement('div');
+  ov.id='modal'; ov.className='fixed inset-0 z-[1000] bg-ink/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-6';
+  ov.innerHTML = `<div class="toast bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl shadow-lift p-6 max-h-[88vh] overflow-y-auto">${html}</div>`;
+  ov.addEventListener('click',e=>{ if(e.target===ov) closeModal(); });
+  document.body.appendChild(ov); document.body.style.overflow='hidden'; lucide.createIcons();
+}
+function closeModal(){ const m=$('#modal'); if(m){ m.remove(); document.body.style.overflow=''; } }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+
+/* ============================== PAGE: ADMIN ============================== */
+function pageAdmin(tab){
+  tab = tab||'overview'; window._atab = tab;
+  let panel='';
+  if(tab==='overview'){
+    panel = `
+    <div class="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+      ${[['users','48,213','Total Users','+312 today'],['store',String(STORES.length),'Total Stores','+2 pending'],['package',String(PRODUCTS.length)+'+','Total Products','live now'],['badge-percent',String(allOffers().length),'Active Offers','across all stores']].map(([ic,n,l,d])=>`
+      <div class="bg-white rounded-2xl shadow-soft p-5">
+        <span class="h-10 w-10 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center"><i data-lucide="${ic}" class="w-5 h-5"></i></span>
+        <p class="font-display text-2xl font-bold mt-3.5">${n}</p><p class="text-xs text-mut mt-0.5">${l} · ${d}</p>
+      </div>`).join('')}
+    </div>
+    <div class="grid lg:grid-cols-[1.6fr,1fr] gap-4">
+      <div class="bg-white rounded-2xl shadow-soft p-5"><h3 class="font-display font-semibold mb-4">New users per month</h3><div class="h-56"><canvas id="achBar"></canvas></div></div>
+      <div class="bg-white rounded-2xl shadow-soft p-5"><h3 class="font-display font-semibold mb-4">Stores by category</h3><div class="h-56"><canvas id="achDough"></canvas></div></div>
+    </div>`;
+  }
+  if(tab==='stores'){
+    panel = `
+    <h3 class="font-display font-bold text-lg mb-1">Pending Store Approvals</h3>
+    <p class="text-sm text-mut mb-4">New stores waiting for verification before going live.</p>
+    <div class="grid sm:grid-cols-2 gap-4 mb-8">
+      ${S.pending.map(ps=>`
+      <div class="bg-white rounded-2xl shadow-soft p-5 border-l-4 border-amber2">
+        <div class="flex items-center gap-3"><span class="h-11 w-11 rounded-xl bg-cream flex items-center justify-center"><i data-lucide="store" class="w-5 h-5 text-mut"></i></span>
+        <div><p class="font-semibold text-sm">${ps.name}</p><p class="text-xs text-mut">${ps.cat} · ${ps.area}</p></div></div>
+        <p class="text-xs text-mut mt-3">Owner: <b>${ps.owner}</b> · self-rated ${ps.rating} ★</p>
+        <div class="flex gap-2 mt-4">
+          <button onclick="approveStore('${ps.id}')" class="flex-1 text-xs font-semibold bg-brand-600 text-white py-2.5 rounded-xl hover:bg-brand-700 transition flex items-center justify-center gap-1.5"><i data-lucide="check" class="w-3.5 h-3.5"></i>Approve</button>
+          <button onclick="rejectStore('${ps.id}')" class="flex-1 text-xs font-semibold border border-stone-200 text-red-500 py-2.5 rounded-xl hover:bg-red-50 transition flex items-center justify-center gap-1.5"><i data-lucide="x" class="w-3.5 h-3.5"></i>Reject</button>
+        </div>
+      </div>`).join('')||`<p class="text-sm text-mut">Queue is clear — every store has been reviewed.</p>`}
+    </div>
+    <h3 class="font-display font-bold text-lg mb-4">All Stores</h3>
+    <div class="bg-white rounded-2xl shadow-soft overflow-hidden overflow-x-auto"><table class="w-full text-sm min-w-[640px]">
+      <thead><tr class="text-left text-xs uppercase tracking-wider text-mut border-b border-stone-100 bg-cream/60"><th class="px-5 py-3.5">Store</th><th class="px-4 py-3.5">Category</th><th class="px-4 py-3.5">Rating</th><th class="px-4 py-3.5">Products</th><th class="px-4 py-3.5 text-right">Status</th></tr></thead>
+      <tbody>${STORES.map(s=>`<tr class="border-b border-stone-50 hover:bg-cream/50"><td class="px-5 py-3.5 font-semibold flex items-center gap-2.5"><img src="${pic(s.img,60,60)}" class="h-8 w-8 rounded-lg object-cover"/>${s.name}</td><td class="px-4 py-3.5 text-mut">${s.cat}</td><td class="px-4 py-3.5">${s.rating} ★</td><td class="px-4 py-3.5 text-mut">${storeProducts(s.id).length}</td><td class="px-4 py-3.5 text-right"><span class="text-[11px] font-semibold px-2.5 py-1 rounded-lg ${s.open?'bg-brand-50 text-brand-700':'bg-stone-100 text-mut'}">${s.open?'Live':'Temporarily closed'}</span></td></tr>`).join('')}</tbody>
+    </table></div>`;
+  }
+  if(tab==='users'){
+    const users=[['Ahmed Hassan','Customer','ahmed@eg.mail',412,'Active'],['Sara Mahmoud','Customer','sara.m@eg.mail',289,'Active'],['Mostafa Kamel','Store Owner','mostafa@nilegadget.eg',67,'Active'],['Salma Adel','Store Owner','salma@greenbasket.eg',12,'Pending'],['Omar Fathy','Customer','omar.f@eg.mail',198,'Suspended']];
+    panel = `
+    <h3 class="font-display font-bold text-lg mb-4">Users</h3>
+    <div class="bg-white rounded-2xl shadow-soft overflow-hidden overflow-x-auto"><table class="w-full text-sm min-w-[640px]">
+      <thead><tr class="text-left text-xs uppercase tracking-wider text-mut border-b border-stone-100 bg-cream/60"><th class="px-5 py-3.5">User</th><th class="px-4 py-3.5">Role</th><th class="px-4 py-3.5">Sessions</th><th class="px-4 py-3.5">Status</th><th class="px-4 py-3.5 text-right">Action</th></tr></thead>
+      <tbody>${users.map(([n,r,e,s,st],i)=>`<tr class="border-b border-stone-50 hover:bg-cream/50">
+        <td class="px-5 py-3.5"><p class="font-semibold">${n}</p><p class="text-xs text-mut">${e}</p></td>
+        <td class="px-4 py-3.5"><span class="text-[11px] font-semibold px-2 py-1 rounded-lg ${r==='Store Owner'?'bg-amber-50 text-amber2':'bg-brand-50 text-brand-700'}">${r}</span></td>
+        <td class="px-4 py-3.5 text-mut">${s}</td>
+        <td class="px-4 py-3.5"><span class="text-[11px] font-semibold px-2 py-1 rounded-lg ${st==='Active'?'bg-brand-50 text-brand-700':st==='Pending'?'bg-amber-50 text-amber2':'bg-red-50 text-red-500'}">${st}</span></td>
+        <td class="px-4 py-3.5 text-right"><button onclick="toast('${st==='Suspended'?'User reinstated':'User '+n.split(' ')[0]+' suspended'}','user-${st==='Suspended'?'check':'x'}')" class="text-xs font-semibold border border-stone-200 px-3 py-1.5 rounded-lg hover:border-ink transition">${st==='Suspended'?'Reinstate':'Suspend'}</button></td>
+      </tr>`).join('')}</tbody></table></div>`;
+  }
+  if(tab==='categories'){
+    panel = `
+    <h3 class="font-display font-bold text-lg mb-4">Manage Categories</h3>
+    <div class="flex flex-wrap gap-2.5 mb-5">
+      ${S.categories.map((c,i)=>`<span class="bg-white shadow-soft rounded-full pl-4 pr-2 py-2 flex items-center gap-2 text-sm font-medium">
+        <i data-lucide="${catIcon[c]}" class="w-4 h-4" style="color:${catColor[c]}"></i>${c}
+        <button onclick="S.categories.splice(${i},1);persist();route();toast('Category removed','trash-2')" class="h-6 w-6 rounded-full hover:bg-red-50 text-stone-400 hover:text-red-500 flex items-center justify-center"><i data-lucide="x" class="w-3.5 h-3.5"></i></button></span>`).join('')}
+    </div>
+    <form onsubmit="event.preventDefault();const v=this.querySelector('input').value.trim();if(v){S.categories.push(v);persist();route();toast('Category “'+v+'” added','plus')}" class="flex gap-2.5 max-w-md">
+      <input required placeholder="New category name…" class="flex-1 text-sm border border-stone-200 rounded-xl px-4 py-2.5 outline-none focus:border-brand-500 bg-white"/>
+      <button class="bg-brand-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-brand-700 transition">Add</button>
+    </form>`;
+  }
+  if(tab==='reports'){
+    panel = `
+    <h3 class="font-display font-bold text-lg mb-1">Reported Content</h3>
+    <p class="text-sm text-mut mb-5">Flagged by users — review and resolve.</p>
+    <div class="space-y-3.5">
+      ${S.reports.map((r,i)=>`
+      <div class="bg-white rounded-2xl shadow-soft p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+        <span class="h-10 w-10 rounded-xl bg-red-50 text-red-500 flex items-center justify-center shrink-0"><i data-lucide="flag" class="w-4.5 h-4.5 w-5 h-5"></i></span>
+        <div class="flex-1"><p class="font-semibold text-sm">${r.type}</p><p class="text-sm text-mut mt-0.5">${r.desc}</p>
+        <p class="text-xs text-mut mt-1.5">by ${r.by} · ${r.at}</p></div>
+        <div class="flex gap-2">
+          <button onclick="S.reports.splice(${i},1);persist();route();toast('Report resolved and archived','check-check')" class="text-xs font-semibold bg-brand-600 text-white px-4 py-2.5 rounded-xl hover:bg-brand-700 transition">Resolve</button>
+          <button onclick="S.reports.splice(${i},1);persist();route();toast('Report dismissed','x')" class="text-xs font-semibold border border-stone-200 px-4 py-2.5 rounded-xl hover:border-ink transition">Dismiss</button>
+        </div>
+      </div>`).join('')||`<div class="bg-white rounded-2xl p-10 text-center shadow-soft"><i data-lucide="shield-check" class="w-9 h-9 mx-auto text-brand-500"></i><p class="text-sm font-semibold mt-3">All clear — no open reports</p></div>`}
+    </div>`;
+  }
+  const tabs=[['overview','layout-dashboard','Overview'],['stores','store','Stores'],['users','users','Users'],['categories','shapes','Categories'],['reports','flag','Reports']];
+  $('#app').innerHTML = `
+  ${navHTML('')}
+  <main class="pt-16 max-w-7xl mx-auto px-4 lg:px-8 py-8">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+      <div class="flex items-center gap-3.5">
+        <span class="h-11 w-11 rounded-xl bg-ink text-white flex items-center justify-center"><i data-lucide="shield" class="w-5 h-5"></i></span>
+        <div><h1 class="font-display font-bold text-xl">Admin Console</h1><p class="text-xs text-mut">Full platform control</p></div>
+      </div>
+      <span class="text-xs font-semibold bg-red-50 text-red-500 px-3 py-1.5 rounded-full flex items-center gap-1.5"><i data-lucide="lock" class="w-3.5 h-3.5"></i>Restricted access</span>
+    </div>
+    <div class="grid lg:grid-cols-[230px,1fr] gap-6 items-start">
+      <aside class="bg-white rounded-2xl shadow-soft p-3">
+        ${tabs.map(([k,ic,l])=>`<button onclick="location.hash='#/admin/${k}'" class="tabbtn ${tab===k?'active':''} w-full flex items-center gap-2.5 text-sm font-medium px-3.5 py-2.5 rounded-xl hover:bg-stone-100 transition text-left"><i data-lucide="${ic}" class="w-4 h-4"></i>${l}</button>`).join('')}
+      </aside>
+      <section class="min-h-[420px]">${panel}</section>
+    </div>
+  </main>
+  ${footerHTML()}`;
+  if(tab==='overview'){
+    Chart.defaults.font.family='Inter';
+    charts.push(new Chart($('#achBar'),{type:'bar',data:{labels:['Jan','Feb','Mar','Apr','May','Jun','Jul'],datasets:[{label:'New users',data:[2100,2760,3120,2980,3840,4210,4680],backgroundColor:'#0E7C5B',borderRadius:8,maxBarThickness:34}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{grid:{color:'#EFEDE6'},border:{display:false}},x:{grid:{display:false},border:{display:false}}}}}));
+    const counts = S.categories.map(c=>STORES.filter(s=>s.cat===c).length).filter(v=>v);
+    charts.push(new Chart($('#achDough'),{type:'doughnut',data:{labels:S.categories,datasets:[{data:counts,backgroundColor:S.categories.map(c=>catColor[c]||'#0E7C5B'),borderWidth:0,hoverOffset:8}]},
+      options:{responsive:true,maintainAspectRatio:false,cutout:'66%',plugins:{legend:{position:'bottom',labels:{usePointStyle:true,boxWidth:8,padding:10,font:{size:10}}}}}}));
+  }
+}
+function approveStore(id){
+  const ps = S.pending.find(p=>p.id===id);
+  STORES.push({id:STORES.length,name:ps.name,cat:ps.cat,area:ps.area.split(',')[0],address:ps.area,lat:29.96+Math.random()*.1,lng:31.22+Math.random()*.12,rating:ps.rating,rev:0,hours:'10:00 – 22:00',open:true,phone:'+20 100 000 0000',img:'new'+id,desc:'Newly verified store on SHOPER.'});
+  S.pending = S.pending.filter(p=>p.id!==id); persist(); route();
+  toast(`“${ps.name}” approved and is now live`,'check-check');
+}
+function rejectStore(id){
+  const ps = S.pending.find(p=>p.id===id);
+  S.pending = S.pending.filter(p=>p.id!==id); persist(); route();
+  toast(`“${ps.name}” rejected — owner notified`,'x');
+}
+
+/* ============================== PAGE: AUTH ============================== */
+function pageAuth(kind,qs){
+  const q = new URLSearchParams(qs||'');
+  const owner = kind==='register' && q.get('type')==='owner';
+  $('#app').innerHTML = `
+  <div class="min-h-screen grid lg:grid-cols-2">
+    <div class="hidden lg:flex flex-col justify-between bg-ink text-white p-12 relative overflow-hidden">
+      <div class="absolute -top-32 -right-32 h-96 w-96 rounded-full bg-brand-600/30 blur-3xl"></div>
+      <div class="absolute bottom-0 -left-24 h-80 w-80 rounded-full bg-amber2/15 blur-3xl"></div>
+      <a href="#/" class="flex items-center gap-2.5 relative">${logo()}<span class="font-display font-bold text-xl">SHOPER</span></a>
+      <div class="relative">
+        <h2 class="font-display text-4xl font-bold leading-tight">${kind==='login'?'Welcome back to smarter shopping.':kind==='register'?'Join thousands of smart shoppers & local stores.':'We\'ll get you back in, fast.'}</h2>
+        <p class="text-stone-400 mt-4 max-w-md">${kind==='register'?'Discover nearby stores, compare real prices, and never miss a local offer again. Store owners get a free dashboard to manage products and offers.':'Your saved stores, favorite products and search history are right where you left them.'}</p>
+        <div class="mt-8 space-y-3.5">
+          ${[['radar','Real-time nearby store discovery'],['git-compare-arrows','Instant price comparison across stores'],['badge-percent','Daily offers from local merchants']].map(([ic,t])=>`
+          <div class="flex items-center gap-3 text-sm text-stone-300"><span class="h-8 w-8 rounded-lg bg-white/10 flex items-center justify-center"><i data-lucide="${ic}" class="w-4 h-4 text-brand-300"></i></span>${t}</div>`).join('')}
+        </div>
+      </div>
+      <p class="text-xs text-stone-500 relative">© 2025 SHOPER — Cairo, Egypt</p>
+    </div>
+    <div class="flex items-center justify-center p-6 lg:p-12 bg-cream">
+      <div class="w-full max-w-md">
+        <a href="#/" class="lg:hidden flex items-center gap-2.5 mb-8 justify-center">${logo()}<span class="font-display font-bold text-xl">SHOPER</span></a>
+        <div class="bg-white rounded-3xl shadow-lift p-7 sm:p-9">
+          <h1 class="font-display text-2xl font-bold">${kind==='login'?'Sign in':kind==='register'?'Create your account':'Reset password'}</h1>
+          <p class="text-sm text-mut mt-1.5">${kind==='login'?'New to SHOPER? <a href="#/register" class="text-brand-700 font-semibold hover:underline">Create an account</a>':kind==='register'?'Already have an account? <a href="#/login" class="text-brand-700 font-semibold hover:underline">Sign in</a>':'Enter your email and we\'ll send a reset link.'}</p>
+          ${kind==='register'?`
+          <div class="grid grid-cols-2 gap-2.5 mt-6">
+            <button type="button" id="roleC" onclick="setRole('customer')" class="rolebtn border-2 rounded-xl p-3.5 text-left transition ${!owner?'border-brand-600 bg-brand-50':'border-stone-200 hover:border-stone-300'}">
+              <i data-lucide="user" class="w-5 h-5 ${!owner?'text-brand-700':'text-mut'}"></i>
+              <p class="text-sm font-semibold mt-1.5">Customer</p><p class="text-[11px] text-mut">Shop & compare</p></button>
+            <button type="button" id="roleO" onclick="setRole('owner')" class="rolebtn border-2 rounded-xl p-3.5 text-left transition ${owner?'border-brand-600 bg-brand-50':'border-stone-200 hover:border-stone-300'}">
+              <i data-lucide="store" class="w-5 h-5 ${owner?'text-brand-700':'text-mut'}"></i>
+              <p class="text-sm font-semibold mt-1.5">Store Owner</p><p class="text-[11px] text-mut">Sell locally</p></button>
+          </div>`:''}
+          <form id="authform" class="mt-6 space-y-4">
+            ${kind!=='login'?`<label class="block text-xs font-semibold text-mut">Full name<input required placeholder="e.g. Ahmed Hassan" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-3 outline-none focus:border-brand-500 bg-cream"/></label>`:''}
+            <label class="block text-xs font-semibold text-mut">Email address<input required type="email" placeholder="you@email.com" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-3 outline-none focus:border-brand-500 bg-cream"/></label>
+            ${kind!=='forgot'?`<label class="block text-xs font-semibold text-mut">Password<input required type="password" placeholder="••••••••" class="mt-1.5 w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-3 outline-none focus:border-brand-500 bg-cream"/></label>`:''}
+            ${kind==='register'?`<div id="ownerFields" class="${owner?'':'hidden'} grid sm:grid-cols-2 gap-4 bg-brand-50/60 border border-brand-100 rounded-2xl p-4">
+              <p class="sm:col-span-2 text-xs font-bold text-brand-800 uppercase tracking-wider flex items-center gap-1.5"><i data-lucide="store" class="w-3.5 h-3.5"></i>Store details</p>
+              <label class="text-xs font-semibold text-mut">Store name<input form="af" required placeholder="e.g. Nile Gadget Store" class="ow w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 bg-white outline-none focus:border-brand-500"/></label>
+              <label class="text-xs font-semibold text-mut">Category<select form="af" class="ow w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 bg-white outline-none focus:border-brand-500">${S.categories.map(c=>`<option>${c}</option>`).join('')}</select></label>
+              <label class="text-xs font-semibold text-mut sm:col-span-2">Address<input form="af" required placeholder="Street, district, city" class="ow w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 bg-white outline-none focus:border-brand-500"/></label>
+              <label class="text-xs font-semibold text-mut">Phone number<input form="af" required placeholder="+20 1XX XXX XXXX" class="ow w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 bg-white outline-none focus:border-brand-500"/></label>
+              <label class="text-xs font-semibold text-mut">Location<input form="af" required placeholder="Pin on map (demo)" class="ow w-full text-sm font-normal border border-stone-200 rounded-xl px-3.5 py-2.5 bg-white outline-none focus:border-brand-500"/></label>
+            </div>`:''}
+            ${kind==='login'?`<div class="flex justify-end"><a href="#/forgot" class="text-xs font-semibold text-brand-700 hover:underline">Forgot password?</a></div>`:''}
+            <button class="w-full bg-brand-600 hover:bg-brand-700 active:scale-[.98] transition text-white text-sm font-semibold py-3.5 rounded-xl">${kind==='login'?'Sign in':kind==='register'?'Create account':'Send reset link'}</button>
+            ${kind==='login'?`<button type="button" onclick="S.user={name:'Demo Guest',email:'guest@shoper.eg',role:'customer'};persist();toast('Signed in as demo guest','user-check');location.hash='#/account'" class="w-full border border-stone-200 hover:border-ink text-sm font-semibold py-3.5 rounded-xl transition">Continue as demo guest</button>`:''}
+          </form>
+        </div>
+        <p class="text-center text-xs text-mut mt-5">By continuing you agree to SHOPER's Terms & Privacy Policy.</p>
+      </div>
+    </div>
+  </div>`;
+  $('#authform').addEventListener('submit',e=>{
+    e.preventDefault();
+    if(kind==='login'){ S.user={name:'Ahmed Hassan',email:'ahmed@eg.mail',role:'customer'}; persist(); toast('Welcome back, Ahmed!','user-check'); location.hash='#/account'; }
+    else if(kind==='forgot'){ toast('Password reset link sent to your email','mail-check'); location.hash='#/login'; }
+    else{
+      const ownerSel = document.querySelector('#roleO').classList.contains('border-brand-600');
+      S.user={name:'New User',email:'new@eg.mail',role:ownerSel?'owner':'customer'}; persist();
+      toast(ownerSel?'Account created — set up your store!':'Account created — happy shopping!','party-popper');
+      location.hash = ownerSel?'#/merchant':'#/account';
+    }
+  });
+}
+function setRole(r){
+  const c=$('#roleC'), o=$('#roleO'), f=$('#ownerFields');
+  const on = r==='owner';
+  c.className = c.className.replace('border-brand-600 bg-brand-50','border-stone-200 hover:border-stone-300');
+  o.className = o.className.replace('border-brand-600 bg-brand-50','border-stone-200 hover:border-stone-300');
+  (on?o:c).className = (on?o:c).className.replace('border-stone-200 hover:border-stone-300','border-brand-600 bg-brand-50');
+  f.classList.toggle('hidden',!on);
+}
+
+/* ============================== ROUTER ============================== */
+function goSearch(){ const q=$('#heroQ').value.trim(); location.hash='#/search'+(q?'?q='+encodeURIComponent(q):''); }
+window.addEventListener('hashchange',route);
+function route(){
+  closeModal(); killMaps(); killCharts();
+  const raw = location.hash.slice(2) || '';
+  const [path,qs] = raw.split('?');
+  const seg = path.split('/');
+  const app = $('#app');
+  document.documentElement.scrollTop = 0;
+  if(seg[0]==='' ) pageHome();
+  else if(seg[0]==='explore') pageExplore(qs);
+  else if(seg[0]==='search') pageSearch(qs);
+  else if(seg[0]==='offers') pageOffers(qs);
+  else if(seg[0]==='compare') pageCompare(seg[1]);
+  else if(seg[0]==='store') pageStore(+seg[1]);
+  else if(seg[0]==='product') pageProduct(seg[1]);
+  else if(seg[0]==='account') pageAccount();
+  else if(seg[0]==='merchant') pageMerchant(seg[1]);
+  else if(seg[0]==='admin') pageAdmin(seg[1]);
+  else if(seg[0]==='login') pageAuth('login',qs);
+  else if(seg[0]==='register') pageAuth('register',qs);
+  else if(seg[0]==='forgot') pageAuth('forgot',qs);
+  else if(seg[0]==='how'||seg[0]==='about'){ pageHome(); setTimeout(()=>{ const t=$(seg[0]==='how'?'#how':'#about'); if(t) t.scrollIntoView({behavior:'smooth'}); },80); }
+  else pageHome();
+  mobileNav();
+  lucide.createIcons();
+  observeReveal();
+}
+route();
+</script>
+</body>
+</html>
